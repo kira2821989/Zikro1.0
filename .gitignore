@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Private User Data & Uploads (Never push to GitHub)
+uploads/
+projects.json
+.env
+.env.local
