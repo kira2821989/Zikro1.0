@@ -1,0 +1,6 @@
+{
+  "name": "EditLock - Anti-Ghosting Video Review & Instant UPI Unlock",
+  "description": "Secure client video review tool for Indian freelance video editors. Features dynamic moving anti-theft watermarks, frame-accurate timestamp feedback, and instant UPI unlock to stop payment ghosting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
