@@ -9,6 +9,121 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 export const STORAGE_BUCKET = 'videos';
 
 /**
+ * Computes SHA-256 hash string for passwords using standard Web Crypto API
+ */
+export async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Signs up a new creator in public.creators table
+ */
+export async function signUpCreator(
+  email: string, 
+  password: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const cleanEmail = email.toLowerCase().trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+    if (password.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters.' };
+    }
+
+    // 1. Check if email already exists in public.creators
+    const { data: existing, error: checkError } = await supabase
+      .from('creators')
+      .select('email')
+      .eq('email', cleanEmail)
+      .maybeSingle();
+
+    if (existing) {
+      return { 
+        success: false, 
+        error: '❌ Account already exists with this email! Please switch to Login.' 
+      };
+    }
+
+    const passwordHash = await hashPassword(password);
+
+    // 2. Insert new creator record
+    const { error: insertError } = await supabase
+      .from('creators')
+      .insert({
+        email: cleanEmail,
+        password_hash: passwordHash,
+        created_at: new Date().toISOString()
+      });
+
+    if (insertError) {
+      console.error('Sign up error in Supabase:', insertError);
+      return { success: false, error: `Sign up failed: ${insertError.message}` };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('signUpCreator exception:', err);
+    return { success: false, error: err.message || 'Network error during sign up.' };
+  }
+}
+
+/**
+ * Verifies creator credentials against public.creators table
+ */
+export async function loginCreator(
+  email: string, 
+  password: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const cleanEmail = email.toLowerCase().trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+    if (!password) {
+      return { success: false, error: 'Please enter your password.' };
+    }
+
+    // 1. Fetch creator by email
+    const { data: creator, error: fetchError } = await supabase
+      .from('creators')
+      .select('email, password_hash')
+      .eq('email', cleanEmail)
+      .maybeSingle();
+
+    if (fetchError) {
+      console.error('Fetch error:', fetchError);
+      return { success: false, error: 'Database connection error. Please try again.' };
+    }
+
+    if (!creator) {
+      return { 
+        success: false, 
+        error: '❌ No account found with this email! Please Sign Up first.' 
+      };
+    }
+
+    // 2. Hash entered password and compare with stored password_hash
+    const enteredHash = await hashPassword(password);
+    if (creator.password_hash !== enteredHash) {
+      return { 
+        success: false, 
+        error: '❌ Incorrect password! Access denied.' 
+      };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('loginCreator exception:', err);
+    return { success: false, error: err.message || 'Login error.' };
+  }
+}
+
+/**
  * Upload a media file (video or image) to Supabase Storage bucket 'videos'.
  * Returns public URL of the uploaded file.
  */

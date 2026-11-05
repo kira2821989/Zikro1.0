@@ -39,7 +39,7 @@ interface EditorDashboardProps {
   onOpenWhatsAppModal: (project: Project) => void;
   onOpenInvoiceModal: (project: Project) => void;
   onDeleteProject: (id: string) => void;
-  onSwitchToClientMode: () => void;
+  onSwitchToClientMode: (projectId?: string) => void;
   onCopyClientLink: (projectId: string) => void;
   onApproveUpiPayment: (projectId: string) => Promise<void> | void;
   onRejectUpiPayment: (projectId: string) => Promise<void> | void;
@@ -336,7 +336,7 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                     onClick={(e) => {
                       e.stopPropagation();
                       onSelectProject(proj.id);
-                      onSwitchToClientMode();
+                      onSwitchToClientMode(proj.id);
                     }}
                     title="View as Client"
                     className="inline-flex items-center gap-1 text-neutral-300 hover:text-amber-300 font-medium py-1 px-2 rounded-lg hover:bg-neutral-800 transition"

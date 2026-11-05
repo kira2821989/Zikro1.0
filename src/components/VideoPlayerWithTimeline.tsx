@@ -10,10 +10,12 @@ import {
   Sparkles,
   Lock,
   Download,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react';
 import { Project, ProjectComment } from '../types';
 import { WatermarkOverlay } from './WatermarkOverlay';
+import { getMediaBlobUrl } from '../utils/mediaDb';
 
 interface VideoPlayerProps {
   project: Project;
@@ -46,8 +48,19 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
   const [liveOpacity, setLiveOpacity] = useState<number>(0.28);
   const isUnlocked = project.status === 'paid_unlocked';
 
+  // FIX 1: Reset error and reload video immediately whenever project or mediaUrl changes!
+  useEffect(() => {
+    setVideoError(false);
+    setCurrentTime(0);
+    setIsPlaying(false);
+    if (videoRef.current) {
+      videoRef.current.load();
+    }
+  }, [project.id, project.mediaUrl]);
+
   // Sync duration when metadata loads
   const handleLoadedMetadata = () => {
+    setVideoError(false);
     if (videoRef.current) {
       const dur = videoRef.current.duration;
       if (dur && !isNaN(dur) && isFinite(dur)) {
@@ -59,6 +72,27 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
   const handleTimeUpdate = () => {
     if (videoRef.current) {
       setCurrentTime(videoRef.current.currentTime);
+    }
+  };
+
+  // FIX 3: Automatic fallback to local IndexedDB blob if remote/cloud URL fails on user's device
+  const handleVideoError = async () => {
+    try {
+      const fallbackBlobUrl = await getMediaBlobUrl(project.id);
+      if (fallbackBlobUrl && videoRef.current && videoRef.current.src !== fallbackBlobUrl) {
+        console.log('🔄 Remote video error: falling back to local device IndexedDB blob...');
+        videoRef.current.src = fallbackBlobUrl;
+        videoRef.current.load();
+        setVideoError(false);
+        return;
+      }
+    } catch (e) {
+      console.warn('Error reading fallback IndexedDB blob:', e);
+    }
+
+    // Only set video error if genuine playback failure occurred
+    if (project.mediaUrl) {
+      setVideoError(true);
     }
   };
 
@@ -140,6 +174,13 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
     }
   };
 
+  const handleRetryLoad = () => {
+    setVideoError(false);
+    if (videoRef.current) {
+      videoRef.current.load();
+    }
+  };
+
   // Aspect ratio classes
   const isVertical = project.aspectRatio === '9:16';
 
@@ -160,26 +201,36 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
         {/* HTML5 Video */}
         <video
           ref={videoRef}
+          key={`${project.id}-${project.mediaUrl}`}
           src={project.mediaUrl}
           playsInline
           loop
-          preload="metadata"
+          preload="auto"
           onLoadedMetadata={handleLoadedMetadata}
+          onCanPlay={() => setVideoError(false)}
+          onLoadedData={() => setVideoError(false)}
           onTimeUpdate={handleTimeUpdate}
           onEnded={() => setIsPlaying(false)}
-          onError={() => setVideoError(true)}
+          onError={handleVideoError}
           className="w-full h-full object-cover select-none pointer-events-auto"
           onClick={togglePlay}
         />
 
         {/* Fallback if external video cannot load */}
         {videoError && (
-          <div className="absolute inset-0 bg-neutral-900 flex flex-col items-center justify-center p-6 text-center">
-            <AlertTriangle className="w-10 h-10 text-amber-400 mb-2" />
+          <div className="absolute inset-0 bg-neutral-900/95 flex flex-col items-center justify-center p-6 text-center z-20">
+            <AlertTriangle className="w-10 h-10 text-amber-400 mb-2 animate-bounce" />
             <div className="font-semibold text-neutral-200 text-sm">Preview Video Offline / Format Check</div>
-            <p className="text-xs text-neutral-400 mt-1 max-w-xs">
-              Direct video source could not stream. You can replace it with any uploaded video from your phone or choose another sample.
+            <p className="text-xs text-neutral-400 mt-1 max-w-xs leading-relaxed">
+              Direct video source could not stream in this browser session.
             </p>
+            <button
+              onClick={handleRetryLoad}
+              className="mt-3 inline-flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 text-amber-300 px-3 py-1.5 rounded-xl text-xs font-semibold border border-neutral-700 transition"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Retry Playback</span>
+            </button>
           </div>
         )}
 
@@ -194,7 +245,7 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
         />
 
         {/* Play/Pause Center Tap Badge overlay (Briefly visible on pause) */}
-        {!isPlaying && (
+        {!isPlaying && !videoError && (
           <button
             onClick={togglePlay}
             aria-label="Play video"

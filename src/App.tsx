@@ -87,14 +87,21 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed: Project[] = JSON.parse(saved);
-        return parsed.map(p => ({
-          ...p,
-          watermarkSettings: {
-            ...p.watermarkSettings,
-            text: p.watermarkSettings?.text?.replace(/EDITLOCK/gi, 'ZIKRO') || 'ZIKRO • DRAFT REVIEW',
-            opacity: Math.min(p.watermarkSettings?.opacity || 0.28, 0.35)
+        return parsed.map(p => {
+          let mediaUrl = p.mediaUrl;
+          if (mediaUrl && mediaUrl.includes('commondatastorage.googleapis.com')) {
+            mediaUrl = 'https://www.w3schools.com/html/mov_bbb.mp4';
           }
-        }));
+          return {
+            ...p,
+            mediaUrl,
+            watermarkSettings: {
+              ...p.watermarkSettings,
+              text: p.watermarkSettings?.text?.replace(/EDITLOCK/gi, 'ZIKRO') || 'ZIKRO • DRAFT REVIEW',
+              opacity: Math.min(p.watermarkSettings?.opacity || 0.28, 0.35)
+            }
+          };
+        });
       }
     } catch (e) {
       console.warn('Failed reading from localStorage:', e);
@@ -218,9 +225,9 @@ export default function App() {
 
   const activeProject = projects.find(p => p.id === activeProjectId) || projects[0] || INITIAL_PROJECTS[0];
 
-  // Hydrate video mediaUrl from IndexedDB if stored locally
+  // Hydrate video mediaUrl from IndexedDB if stored locally on this device
   useEffect(() => {
-    if (activeProject && activeProject.storageInfo?.storageType === 'indexeddb') {
+    if (activeProject) {
       getMediaBlobUrl(activeProject.id).then(blobUrl => {
         if (blobUrl && blobUrl !== activeProject.mediaUrl) {
           handleUpdateActiveProject({ mediaUrl: blobUrl });
@@ -768,7 +775,10 @@ export default function App() {
               setIsInvoiceOpen(true);
             }}
             onDeleteProject={handleDeleteProject}
-            onSwitchToClientMode={() => {
+            onSwitchToClientMode={(id) => {
+              if (id) {
+                setActiveProjectId(id);
+              }
               setViewMode('client');
               setIsCreatorPreviewingClient(true);
               playClickPop();

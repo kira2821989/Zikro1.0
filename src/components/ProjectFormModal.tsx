@@ -29,9 +29,9 @@ interface ProjectFormModalProps {
 }
 
 const PRESET_VIDEOS = [
-  { label: '🔥 9:16 Fitness / Action Reel (15s)', url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', aspect: '9:16' as AspectRatio },
-  { label: '📱 9:16 Tech / Shorts Sample (15s)', url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', aspect: '9:16' as AspectRatio },
-  { label: '🎬 16:9 Cinematic Landscape Vlog (47s)', url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4', aspect: '16:9' as AspectRatio },
+  { label: '🔥 9:16 Action / Fitness Reel (10s)', url: 'https://www.w3schools.com/html/mov_bbb.mp4', aspect: '9:16' as AspectRatio },
+  { label: '📱 9:16 Tech Shorts Sample (12s)', url: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4', aspect: '9:16' as AspectRatio },
+  { label: '🎬 16:9 Cinematic Landscape (10s)', url: 'https://www.w3schools.com/html/mov_bbb.mp4', aspect: '16:9' as AspectRatio },
 ];
 
 export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
@@ -122,24 +122,34 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
     let finalMediaUrl = mediaUrl.trim();
     let storageType: 'supabase_storage' | 'indexeddb' | 'cloud_url' = 'cloud_url';
 
-    // 1. Upload to Supabase Storage Bucket 'videos' if file was selected
+    // 1. If file was selected, ALWAYS store in local IndexedDB first for instant, guaranteed playback
     if (pendingFileBlob) {
+      let localCachedUrl = '';
+      try {
+        setUploadStatusText(`Caching ${formatBytes(fileSizeBytes)} to device storage...`);
+        const stored = await storeMediaBlob(projectId, pendingFileBlob, localFileName || 'video.mp4');
+        localCachedUrl = stored.objectUrl;
+        finalMediaUrl = localCachedUrl;
+        storageType = 'indexeddb';
+      } catch (idbErr) {
+        console.warn('IndexedDB initial caching notice:', idbErr);
+      }
+
+      // 2. ALSO attempt upload to Supabase Cloud Storage bucket 'videos'
       try {
         setUploadStatusText(`Uploading ${formatBytes(fileSizeBytes)} to Supabase Cloud Storage...`);
         const cloudUrl = await uploadMediaToSupabase(pendingFileBlob, projectId, (pct) => {
           setUploadProgress(pct);
         });
-        finalMediaUrl = cloudUrl;
-        storageType = 'supabase_storage';
+        if (cloudUrl) {
+          finalMediaUrl = cloudUrl;
+          storageType = 'supabase_storage';
+        }
       } catch (cloudErr) {
-        console.warn('Cloud storage upload encountered an issue, storing to local device storage:', cloudErr);
-        // Fallback to IndexedDB local caching
-        try {
-          const stored = await storeMediaBlob(projectId, pendingFileBlob, localFileName || 'video.mp4');
-          finalMediaUrl = stored.objectUrl;
+        console.warn('Cloud storage upload encountered an issue, keeping reliable local device cache:', cloudErr);
+        if (localCachedUrl) {
+          finalMediaUrl = localCachedUrl;
           storageType = 'indexeddb';
-        } catch (idbErr) {
-          console.error('IndexedDB backup failed:', idbErr);
         }
       }
     } else if (initialProject?.storageInfo?.storageType) {
