@@ -19,7 +19,8 @@ import {
   Trash2,
   Edit3,
   KeyRound,
-  HardDrive
+  HardDrive,
+  Copy
 } from 'lucide-react';
 import { Project } from '../types';
 import { formatBytes } from '../utils/mediaDb';
@@ -35,6 +36,7 @@ interface EditorDashboardProps {
   onOpenInvoiceModal: (project: Project) => void;
   onDeleteProject: (id: string) => void;
   onSwitchToClientMode: () => void;
+  onCopyClientLink: (projectId: string) => void;
 }
 
 export const EditorDashboard: React.FC<EditorDashboardProps> = ({
@@ -46,7 +48,8 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
   onOpenWhatsAppModal,
   onOpenInvoiceModal,
   onDeleteProject,
-  onSwitchToClientMode
+  onSwitchToClientMode,
+  onCopyClientLink
 }) => {
   // Calculations
   const pendingAmount = projects
@@ -232,6 +235,19 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                 </button>
 
                 <div className="flex items-center gap-1">
+                  {/* Copy Client Link */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCopyClientLink(proj.id);
+                    }}
+                    title="Copy Secret Review Link for Client"
+                    className="p-1.5 text-neutral-400 hover:text-amber-400 hover:bg-neutral-800 rounded-lg transition"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+
                   {/* WhatsApp */}
                   <button
                     type="button"
