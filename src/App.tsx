@@ -25,10 +25,15 @@ import {
   CheckCircle2,
   ExternalLink,
   ShieldCheck,
-  ArrowLeft
+  ArrowLeft,
+  LogOut,
+  User,
+  Clock,
+  Cloud,
+  Loader2
 } from 'lucide-react';
 
-import { Project, ProjectComment } from './types';
+import { Project, ProjectComment, ProjectStatus } from './types';
 import { INITIAL_PROJECTS } from './data/sampleProjects';
 import { VideoPlayerWithTimeline } from './components/VideoPlayerWithTimeline';
 import { ThumbnailReviewer } from './components/ThumbnailReviewer';
@@ -39,16 +44,47 @@ import { InvoiceModal } from './components/InvoiceModal';
 import { ProjectFormModal } from './components/ProjectFormModal';
 import { EditorDashboard } from './components/EditorDashboard';
 import { PasscodeLockModal } from './components/PasscodeLockModal';
+import { CreatorAuthScreen } from './components/CreatorAuthScreen';
+import { 
+  fetchProjectById, 
+  fetchCreatorProjects, 
+  saveProjectToSupabase, 
+  updateProjectStatusInSupabase, 
+  updateProjectCommentsInSupabase,
+  deleteProjectFromSupabase 
+} from './supabase';
 import { getMediaBlobUrl } from './utils/mediaDb';
 import { playClickPop, playPaymentSuccessChime } from './utils/audio';
 
 const STORAGE_KEY = 'zikro_projects_v2';
+const CREATOR_EMAIL_KEY = 'zikro_creator_email';
 
 export default function App() {
-  // Initialize projects from localStorage or default seed
+  // Check if client accessed via shared review link (e.g. ?project=id&mode=client)
+  const isDirectClientLink = typeof window !== 'undefined' && 
+    (new URLSearchParams(window.location.search).get('mode') === 'client');
+
+  const urlProjectId = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('project')
+    : null;
+
+  // Multi-user Creator session
+  const [creatorEmail, setCreatorEmail] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(CREATOR_EMAIL_KEY) || null;
+    }
+    return null;
+  });
+
+  // Default: 'client' if link explicitly requested client mode, otherwise 'editor'
+  const [viewMode, setViewMode] = useState<'client' | 'editor'>(() => {
+    return isDirectClientLink ? 'client' : 'editor';
+  });
+
+  // Projects state
   const [projects, setProjects] = useState<Project[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('editlock_projects_v2');
+      const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed: Project[] = JSON.parse(saved);
         return parsed.map(p => ({
@@ -66,26 +102,12 @@ export default function App() {
     return INITIAL_PROJECTS;
   });
 
-  // Check if client accessed via shared review link (e.g. ?project=id&mode=client)
-  const isDirectClientLink = typeof window !== 'undefined' && 
-    (new URLSearchParams(window.location.search).get('mode') === 'client');
-
   const [activeProjectId, setActiveProjectId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const urlProj = new URLSearchParams(window.location.search).get('project');
-      if (urlProj && projects.some(p => p.id === urlProj)) {
-        return urlProj;
-      }
-    }
+    if (urlProjectId) return urlProjectId;
     return projects[0]?.id || 'proj-reel-gym-01';
   });
 
-  // Default: 'editor' for creator; 'client' if link explicitly requested client mode
-  const [viewMode, setViewMode] = useState<'client' | 'editor'>(() => {
-    return isDirectClientLink ? 'client' : 'editor';
-  });
-
-  // Track if creator is testing what client sees from the dashboard
+  const [isLoadingCloud, setIsLoadingCloud] = useState(false);
   const [isCreatorPreviewingClient, setIsCreatorPreviewingClient] = useState(false);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -96,15 +118,6 @@ export default function App() {
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
   const [isProjectFormOpen, setIsProjectFormOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
-
-  // Sync to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
-    } catch (e) {
-      console.warn('Failed saving to localStorage:', e);
-    }
-  }, [projects]);
 
   // Session-cached unlocked PIN project IDs
   const [unlockedPinProjects, setUnlockedPinProjects] = useState<Set<string>>(() => {
@@ -120,19 +133,90 @@ export default function App() {
     return set;
   });
 
-  const handleUnlockPasscode = (projectId: string) => {
-    setUnlockedPinProjects(prev => {
-      const next = new Set(prev);
-      next.add(projectId);
-      try {
-        sessionStorage.setItem('zikro_unlocked_pins', JSON.stringify(Array.from(next)));
-      } catch {}
-      return next;
-    });
-    playPaymentSuccessChime();
-  };
+  // ================= 1. SUPABASE DATA SYNC =================
 
-  const activeProject = projects.find(p => p.id === activeProjectId) || projects[0];
+  // If Client opens a specific project URL, fetch immediately from Supabase
+  useEffect(() => {
+    if (urlProjectId) {
+      setIsLoadingCloud(true);
+      fetchProjectById(urlProjectId).then(cloudProj => {
+        setIsLoadingCloud(false);
+        if (cloudProj) {
+          setProjects(prev => {
+            const exists = prev.some(p => p.id === cloudProj.id);
+            if (exists) {
+              return prev.map(p => p.id === cloudProj.id ? cloudProj : p);
+            }
+            return [cloudProj, ...prev];
+          });
+          setActiveProjectId(cloudProj.id);
+        }
+      });
+    }
+  }, [urlProjectId]);
+
+  // When Creator logs in, fetch all projects belonging to their email from Supabase
+  useEffect(() => {
+    if (creatorEmail && viewMode === 'editor') {
+      setIsLoadingCloud(true);
+      fetchCreatorProjects(creatorEmail).then(cloudProjects => {
+        setIsLoadingCloud(false);
+        if (cloudProjects.length > 0) {
+          setProjects(cloudProjects);
+          setActiveProjectId(cloudProjects[0].id);
+        } else {
+          // New creator without projects: seed with personalized sample projects and sync to Supabase
+          const personalizedSeed = INITIAL_PROJECTS.map(p => ({
+            ...p,
+            creatorEmail,
+            upiId: `${creatorEmail.split('@')[0]}@okhdfcbank`,
+            upiPayeeName: creatorEmail.split('@')[0].toUpperCase()
+          }));
+          setProjects(personalizedSeed);
+          setActiveProjectId(personalizedSeed[0].id);
+          personalizedSeed.forEach(p => saveProjectToSupabase(p, creatorEmail));
+        }
+      });
+    }
+  }, [creatorEmail, viewMode]);
+
+  // ================= 2. CLIENT AUTO-POLLING (Every 4 seconds for instant unlock) =================
+  useEffect(() => {
+    if (viewMode !== 'client' || !activeProjectId) return;
+
+    const interval = setInterval(async () => {
+      const latest = await fetchProjectById(activeProjectId);
+      if (latest) {
+        setProjects(prev => {
+          const idx = prev.findIndex(p => p.id === latest.id);
+          if (idx >= 0) {
+            const oldStatus = prev[idx].status;
+            // Detect if creator approved and unlocked payment
+            if (oldStatus !== 'paid_unlocked' && latest.status === 'paid_unlocked') {
+              playPaymentSuccessChime();
+            }
+            const copy = [...prev];
+            copy[idx] = latest;
+            return copy;
+          }
+          return [latest, ...prev];
+        });
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [viewMode, activeProjectId]);
+
+  // Sync to localStorage as backup
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+    } catch (e) {
+      console.warn('Failed saving to localStorage:', e);
+    }
+  }, [projects]);
+
+  const activeProject = projects.find(p => p.id === activeProjectId) || projects[0] || INITIAL_PROJECTS[0];
 
   // Hydrate video mediaUrl from IndexedDB if stored locally
   useEffect(() => {
@@ -144,6 +228,18 @@ export default function App() {
       });
     }
   }, [activeProjectId]);
+
+  const handleUnlockPasscode = (projectId: string) => {
+    setUnlockedPinProjects(prev => {
+      const next = new Set(prev);
+      next.add(projectId);
+      try {
+        sessionStorage.setItem('zikro_unlocked_pins', JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
+    playPaymentSuccessChime();
+  };
 
   const handleUpdateActiveProject = (updated: Partial<Project>) => {
     setProjects(prev => prev.map(p => {
@@ -164,10 +260,14 @@ export default function App() {
       replies: []
     };
 
+    const updatedComments = [...activeProject.comments, newComment];
     handleUpdateActiveProject({
-      comments: [...activeProject.comments, newComment],
+      comments: updatedComments,
       status: activeProject.status === 'paid_unlocked' ? 'paid_unlocked' : 'revision_requested'
     });
+
+    // Sync comments to Supabase
+    updateProjectCommentsInSupabase(activeProject.id, updatedComments);
   };
 
   const handleToggleResolve = (commentId: string) => {
@@ -178,6 +278,7 @@ export default function App() {
       return c;
     });
     handleUpdateActiveProject({ comments: updated });
+    updateProjectCommentsInSupabase(activeProject.id, updated);
   };
 
   const handleAddReply = (commentId: string, replyText: string, authorName: string) => {
@@ -195,18 +296,71 @@ export default function App() {
       return c;
     });
     handleUpdateActiveProject({ comments: updated });
+    updateProjectCommentsInSupabase(activeProject.id, updated);
   };
 
-  const handlePaymentSuccess = (utrNumber: string, method: string) => {
+  // ================= 3. STRICT ANTI-FRAUD UPI HANDLING =================
+  
+  // Client submits UTR: Updates project to 'utr_submitted' (DO NOT UNLOCK IMMEDIATELY!)
+  const handleSubmitUtr = async (utrNumber: string, method: string) => {
+    const paymentDetails = {
+      utrNumber,
+      method,
+      paidAt: new Date().toISOString(),
+      verified: false
+    };
+
     handleUpdateActiveProject({
-      status: 'paid_unlocked',
-      paymentDetails: {
-        utrNumber,
-        method,
-        paidAt: new Date().toISOString(),
-        verified: true
-      }
+      status: 'utr_submitted',
+      paymentDetails
     });
+
+    await updateProjectStatusInSupabase(activeProject.id, 'utr_submitted', paymentDetails);
+  };
+
+  // Creator in Studio clicks "✅ Approve & Unlock"
+  const handleApproveUpiPayment = async (projectId: string) => {
+    const target = projects.find(p => p.id === projectId);
+    if (!target) return;
+
+    const paymentDetails = {
+      ...(target.paymentDetails || {}),
+      paidAt: target.paymentDetails?.paidAt || new Date().toISOString(),
+      verified: true
+    };
+
+    setProjects(prev => prev.map(p => {
+      if (p.id === projectId) {
+        return {
+          ...p,
+          status: 'paid_unlocked',
+          paymentDetails,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return p;
+    }));
+
+    await updateProjectStatusInSupabase(projectId, 'paid_unlocked', paymentDetails);
+    playPaymentSuccessChime();
+  };
+
+  // Creator in Studio clicks "❌ Reject Fake UTR"
+  const handleRejectUpiPayment = async (projectId: string) => {
+    setProjects(prev => prev.map(p => {
+      if (p.id === projectId) {
+        return {
+          ...p,
+          status: 'in_review',
+          paymentDetails: undefined,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return p;
+    }));
+
+    await updateProjectStatusInSupabase(projectId, 'in_review', undefined);
+    playClickPop();
   };
 
   const handleSaveProject = (savedProj: Project) => {
@@ -220,7 +374,7 @@ export default function App() {
     setActiveProjectId(savedProj.id);
   };
 
-  const handleDeleteProject = (id: string) => {
+  const handleDeleteProject = async (id: string) => {
     setProjects(prev => {
       const filtered = prev.filter(p => p.id !== id);
       if (activeProjectId === id && filtered.length > 0) {
@@ -228,13 +382,19 @@ export default function App() {
       }
       return filtered;
     });
+    await deleteProjectFromSupabase(id);
   };
 
   const handleResetSampleData = () => {
     if (confirm('Reset to default sample projects?')) {
-      setProjects(INITIAL_PROJECTS);
-      setActiveProjectId(INITIAL_PROJECTS[0].id);
+      const seed = INITIAL_PROJECTS.map(p => ({
+        ...p,
+        creatorEmail: creatorEmail || 'editor.vikram@gmail.com'
+      }));
+      setProjects(seed);
+      setActiveProjectId(seed[0].id);
       localStorage.removeItem(STORAGE_KEY);
+      seed.forEach(p => saveProjectToSupabase(p, creatorEmail || 'editor.vikram@gmail.com'));
       playClickPop();
     }
   };
@@ -250,10 +410,29 @@ export default function App() {
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
+  const handleLogin = (email: string) => {
+    setCreatorEmail(email);
+    localStorage.setItem(CREATOR_EMAIL_KEY, email);
+    setViewMode('editor');
+  };
+
+  const handleLogout = () => {
+    setCreatorEmail(null);
+    localStorage.removeItem(CREATOR_EMAIL_KEY);
+    playClickPop();
+  };
+
   const isUnlocked = activeProject.status === 'paid_unlocked';
+  const isPaidUnlocked = isUnlocked;
+  const isUtrSubmitted = activeProject.status === 'utr_submitted';
   const clientReviewUrl = typeof window !== 'undefined' 
     ? `${window.location.origin}${window.location.pathname}?project=${activeProject.id}&mode=client` 
     : '';
+
+  // ================= 4. AUTH GATE FOR CREATORS (Clients skip auth!) =================
+  if (viewMode === 'editor' && !creatorEmail && !isDirectClientLink) {
+    return <CreatorAuthScreen onLogin={handleLogin} />;
+  }
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col bg-grid-pattern pb-12 selection:bg-amber-500 selection:text-neutral-950">
@@ -269,22 +448,23 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Quick Toggle for testing paid/unpaid state */}
+            {/* Creator Demo Simulator (ONLY visible in creator preview mode, never to real client) */}
             <button
               onClick={() => {
+                const nextStatus: ProjectStatus = isUnlocked ? 'in_review' : 'paid_unlocked';
                 handleUpdateActiveProject({
-                  status: isUnlocked ? 'in_review' : 'paid_unlocked',
-                  paymentDetails: isUnlocked ? undefined : {
-                    utrNumber: 'UPI/PREVIEW/TEST',
+                  status: nextStatus,
+                  paymentDetails: nextStatus === 'paid_unlocked' ? {
+                    utrNumber: 'UPI/CREATOR/TEST',
                     paidAt: new Date().toISOString(),
                     method: 'Google Pay',
                     verified: true
-                  }
+                  } : undefined
                 });
-                if (!isUnlocked) playPaymentSuccessChime();
+                if (nextStatus === 'paid_unlocked') playPaymentSuccessChime();
                 else playClickPop();
               }}
-              className="bg-neutral-950/20 hover:bg-neutral-950/30 text-neutral-950 font-mono text-[11px] px-2.5 py-1 rounded-lg transition"
+              className="bg-neutral-950/20 hover:bg-neutral-950/30 text-neutral-950 font-mono text-[11px] px-2.5 py-1 rounded-lg transition font-bold"
             >
               {isUnlocked ? 'Simulate Unpaid' : 'Simulate Paid'}
             </button>
@@ -352,6 +532,20 @@ export default function App() {
 
             {/* Creator Studio Right Actions */}
             <div className="flex items-center gap-2">
+              
+              {/* Creator Account Pill with Logout */}
+              <div className="hidden lg:flex items-center gap-1.5 text-xs text-neutral-300 bg-neutral-900 border border-neutral-800 rounded-xl px-2.5 py-1.5">
+                <User className="w-3.5 h-3.5 text-amber-400" />
+                <span className="truncate max-w-[130px] font-mono text-[11px]">{creatorEmail}</span>
+                <button
+                  onClick={handleLogout}
+                  title="Logout from Creator Studio"
+                  className="text-neutral-500 hover:text-red-400 ml-1 p-0.5 rounded transition"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
               {/* Preview as Client button */}
               <button
                 onClick={() => {
@@ -446,7 +640,20 @@ export default function App() {
                 </div>
               </div>
 
-              {!isUnlocked ? (
+              {isPaidUnlocked ? (
+                <div className="inline-flex items-center gap-1.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold px-3 py-1.5 rounded-xl text-xs">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Payment Settled</span>
+                </div>
+              ) : isUtrSubmitted ? (
+                <button
+                  onClick={() => setIsPaymentOpen(true)}
+                  className="inline-flex items-center gap-1.5 bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold px-3 py-2 rounded-xl text-xs animate-pulse"
+                >
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>UTR Pending Check</span>
+                </button>
+              ) : (
                 <button
                   onClick={() => {
                     setIsPaymentOpen(true);
@@ -457,11 +664,6 @@ export default function App() {
                   <Lock className="w-3.5 h-3.5" />
                   <span>Approve & Pay via UPI</span>
                 </button>
-              ) : (
-                <div className="inline-flex items-center gap-1.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold px-3 py-1.5 rounded-xl text-xs">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Payment Settled</span>
-                </div>
               )}
             </div>
           </div>
@@ -470,16 +672,25 @@ export default function App() {
 
       {/* 3. STATUS BAR (Explaining watermark / unlocked status) */}
       <div className={`w-full py-2 px-4 text-xs font-medium border-b flex items-center justify-between flex-wrap gap-2 transition-colors ${
-        isUnlocked 
+        isPaidUnlocked 
           ? 'bg-emerald-950/60 border-emerald-800 text-emerald-200' 
-          : 'bg-amber-950/40 border-amber-800/60 text-amber-200'
+          : isUtrSubmitted
+            ? 'bg-amber-950/70 border-amber-700/80 text-amber-200 animate-pulse-subtle'
+            : 'bg-amber-950/40 border-amber-800/60 text-amber-200'
       }`}>
         <div className="max-w-7xl mx-auto w-full flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
-            {isUnlocked ? (
+            {isPaidUnlocked ? (
               <>
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>Payment Confirmed (₹{activeProject.amountINR.toLocaleString('en-IN')}). Watermark removed & clean 4K master file is unlocked!</span>
+              </>
+            ) : isUtrSubmitted ? (
+              <>
+                <Clock className="w-4 h-4 text-amber-400 shrink-0 animate-spin" />
+                <span>
+                  <strong>⏳ UTR Submitted ({activeProject.paymentDetails?.utrNumber}):</strong> Waiting for editor to verify bank credit. Video will unlock automatically once approved.
+                </span>
               </>
             ) : (
               <>
@@ -518,26 +729,6 @@ export default function App() {
                 </button>
               )}
 
-              {/* Quick Demo Toggle */}
-              <button
-                onClick={() => {
-                  handleUpdateActiveProject({
-                    status: isUnlocked ? 'in_review' : 'paid_unlocked',
-                    paymentDetails: isUnlocked ? undefined : {
-                      utrNumber: 'UPI/SIMULATED/DEMO',
-                      paidAt: new Date().toISOString(),
-                      method: 'Google Pay',
-                      verified: true
-                    }
-                  });
-                  if (!isUnlocked) playPaymentSuccessChime();
-                  else playClickPop();
-                }}
-                className="underline text-amber-300 hover:text-white"
-              >
-                [{isUnlocked ? 'Simulate Unpaid' : 'Simulate Paid'}]
-              </button>
-
               <button
                 onClick={handleResetSampleData}
                 title="Reset Sample Projects"
@@ -558,6 +749,7 @@ export default function App() {
           <EditorDashboard
             projects={projects}
             activeProjectId={activeProjectId}
+            creatorEmail={creatorEmail || 'editor.vikram@gmail.com'}
             onSelectProject={(id) => setActiveProjectId(id)}
             onOpenCreateModal={() => {
               setEditingProject(null);
@@ -582,6 +774,8 @@ export default function App() {
               playClickPop();
             }}
             onCopyClientLink={(id) => handleCopyClientLink(id)}
+            onApproveUpiPayment={handleApproveUpiPayment}
+            onRejectUpiPayment={handleRejectUpiPayment}
           />
         ) : (
           /* ================= CLIENT REVIEW VIEW ================= */
@@ -621,7 +815,20 @@ export default function App() {
                     </div>
                   </div>
 
-                  {!isUnlocked ? (
+                  {isPaidUnlocked ? (
+                    <div className="inline-flex items-center gap-2 bg-emerald-600/30 border border-emerald-500/50 text-emerald-300 font-bold px-4 py-2.5 rounded-2xl text-xs">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <span>Unlocked & Settled</span>
+                    </div>
+                  ) : isUtrSubmitted ? (
+                    <button
+                      onClick={() => setIsPaymentOpen(true)}
+                      className="inline-flex items-center gap-2 bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold px-4 py-3 rounded-2xl text-xs sm:text-sm animate-pulse"
+                    >
+                      <Clock className="w-4 h-4 text-amber-400" />
+                      <span>UTR Pending Editor Check</span>
+                    </button>
+                  ) : (
                     <button
                       onClick={() => setIsPaymentOpen(true)}
                       className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black px-4 py-3 rounded-2xl text-xs sm:text-sm shadow-xl shadow-amber-500/20 active:scale-95 transition"
@@ -629,11 +836,6 @@ export default function App() {
                       <Lock className="w-4 h-4" />
                       <span>Approve & Pay via UPI</span>
                     </button>
-                  ) : (
-                    <div className="inline-flex items-center gap-2 bg-emerald-600/30 border border-emerald-500/50 text-emerald-300 font-bold px-4 py-2.5 rounded-2xl text-xs">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                      <span>Unlocked & Settled</span>
-                    </div>
                   )}
                 </div>
               </div>
@@ -727,7 +929,8 @@ export default function App() {
         project={activeProject}
         isOpen={isPaymentOpen}
         onClose={() => setIsPaymentOpen(false)}
-        onPaymentSuccess={handlePaymentSuccess}
+        onSubmitUtr={handleSubmitUtr}
+        isEditorView={viewMode === 'editor' || isCreatorPreviewingClient}
       />
 
       <WhatsAppShareModal
@@ -751,6 +954,7 @@ export default function App() {
         }}
         onSave={handleSaveProject}
         initialProject={editingProject}
+        creatorEmail={creatorEmail || 'editor.vikram@gmail.com'}
       />
     </div>
   );

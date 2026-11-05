@@ -9,11 +9,14 @@ import {
   User, 
   Phone, 
   KeyRound, 
-  HardDrive, 
+  Cloud, 
   RefreshCw,
-  Check
+  Check,
+  Loader2,
+  HardDrive
 } from 'lucide-react';
 import { Project, MediaType, AspectRatio, WatermarkSpeed, WatermarkStyle } from '../types';
+import { uploadMediaToSupabase, saveProjectToSupabase } from '../supabase';
 import { storeMediaBlob, formatBytes } from '../utils/mediaDb';
 import { playClickPop } from '../utils/audio';
 
@@ -22,6 +25,7 @@ interface ProjectFormModalProps {
   onClose: () => void;
   onSave: (project: Project) => void;
   initialProject?: Project | null;
+  creatorEmail: string;
 }
 
 const PRESET_VIDEOS = [
@@ -34,7 +38,8 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
   isOpen,
   onClose,
   onSave,
-  initialProject
+  initialProject,
+  creatorEmail
 }) => {
   const [title, setTitle] = useState(initialProject?.title || '');
   const [type, setType] = useState<MediaType>(initialProject?.type || 'video');
@@ -42,13 +47,17 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
   const [clientName, setClientName] = useState(initialProject?.clientName || '');
   const [clientPhone, setClientPhone] = useState(initialProject?.clientPhone || '');
   const [amountINR, setAmountINR] = useState<number>(initialProject?.amountINR || 1500);
-  const [upiId, setUpiId] = useState(initialProject?.upiId || localStorage.getItem('editlock_saved_upi') || 'editor@okhdfcbank');
-  const [upiPayeeName, setUpiPayeeName] = useState(initialProject?.upiPayeeName || localStorage.getItem('editlock_saved_name') || 'Vikram Singh');
+  const [upiId, setUpiId] = useState(initialProject?.upiId || localStorage.getItem('zikro_saved_upi') || 'editor@okhdfcbank');
+  const [upiPayeeName, setUpiPayeeName] = useState(initialProject?.upiPayeeName || localStorage.getItem('zikro_saved_name') || 'Vikram Singh');
   const [mediaUrl, setMediaUrl] = useState(initialProject?.mediaUrl || PRESET_VIDEOS[0].url);
   const [localFileName, setLocalFileName] = useState(initialProject?.storageInfo?.originalFileName || '');
   const [pendingFileBlob, setPendingFileBlob] = useState<File | null>(null);
   const [fileSizeBytes, setFileSizeBytes] = useState<number>(initialProject?.storageInfo?.fileSizeBytes || 0);
+  
+  // Cloud upload tracking
   const [isSavingMedia, setIsSavingMedia] = useState(false);
+  const [uploadStatusText, setUploadStatusText] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   // Security & Passcode
   const [isProtected, setIsProtected] = useState(initialProject?.securitySettings?.isProtected ?? false);
@@ -72,8 +81,8 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
     if (file) {
       setPendingFileBlob(file);
       setFileSizeBytes(file.size);
-      const tempUrl = URL.createObjectURL(file);
-      setMediaUrl(tempUrl);
+      const tempPreviewUrl = URL.createObjectURL(file);
+      setMediaUrl(tempPreviewUrl);
       setLocalFileName(file.name);
       if (!title) {
         setTitle(file.name.replace(/\.[^/.]+$/, ''));
@@ -102,26 +111,47 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
     if (!title.trim() || !clientName.trim() || !mediaUrl.trim()) return;
 
     setIsSavingMedia(true);
+    setUploadProgress(10);
+    setUploadStatusText('Preparing project data...');
 
     // Save default editor credentials for future projects
-    localStorage.setItem('editlock_saved_upi', upiId);
-    localStorage.setItem('editlock_saved_name', upiPayeeName);
+    localStorage.setItem('zikro_saved_upi', upiId);
+    localStorage.setItem('zikro_saved_name', upiPayeeName);
 
     const projectId = initialProject?.id || `proj-${Date.now().toString(36)}`;
     let finalMediaUrl = mediaUrl.trim();
+    let storageType: 'supabase_storage' | 'indexeddb' | 'cloud_url' = 'cloud_url';
 
-    // Persist file into IndexedDB for 0-budget persistent playback
+    // 1. Upload to Supabase Storage Bucket 'videos' if file was selected
     if (pendingFileBlob) {
       try {
-        const stored = await storeMediaBlob(projectId, pendingFileBlob, localFileName || 'video.mp4');
-        finalMediaUrl = stored.objectUrl;
-      } catch (err) {
-        console.warn('IndexedDB persistence error:', err);
+        setUploadStatusText(`Uploading ${formatBytes(fileSizeBytes)} to Supabase Cloud Storage...`);
+        const cloudUrl = await uploadMediaToSupabase(pendingFileBlob, projectId, (pct) => {
+          setUploadProgress(pct);
+        });
+        finalMediaUrl = cloudUrl;
+        storageType = 'supabase_storage';
+      } catch (cloudErr) {
+        console.warn('Cloud storage upload encountered an issue, storing to local device storage:', cloudErr);
+        // Fallback to IndexedDB local caching
+        try {
+          const stored = await storeMediaBlob(projectId, pendingFileBlob, localFileName || 'video.mp4');
+          finalMediaUrl = stored.objectUrl;
+          storageType = 'indexeddb';
+        } catch (idbErr) {
+          console.error('IndexedDB backup failed:', idbErr);
+        }
       }
+    } else if (initialProject?.storageInfo?.storageType) {
+      storageType = initialProject.storageInfo.storageType;
     }
+
+    setUploadStatusText('Syncing with Supabase Cloud Database...');
+    setUploadProgress(90);
 
     const savedProject: Project = {
       id: projectId,
+      creatorEmail,
       title: title.trim(),
       type,
       aspectRatio,
@@ -141,7 +171,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
         passcode: isProtected ? passcode : undefined
       },
       storageInfo: {
-        storageType: pendingFileBlob ? 'indexeddb' : 'cloud_url',
+        storageType,
         fileSizeBytes: fileSizeBytes || undefined,
         originalFileName: localFileName || undefined
       },
@@ -156,6 +186,10 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
       }
     };
 
+    // 2. Save directly to Supabase public.projects table
+    await saveProjectToSupabase(savedProject, creatorEmail);
+
+    setUploadProgress(100);
     setIsSavingMedia(false);
     onSave(savedProject);
     playClickPop();
@@ -175,13 +209,37 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
               <h3 className="text-base font-bold text-white">
                 {initialProject ? 'Edit Review Project' : 'Create New Client Review'}
               </h3>
-              <p className="text-xs text-neutral-400">Lock your video preview with dynamic watermark, passcode & instant UPI</p>
+              <p className="text-xs text-neutral-400">
+                Cloud-synced video preview with dynamic watermark & instant UPI
+              </p>
             </div>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 text-neutral-400 hover:text-white rounded-lg">
+          <button 
+            onClick={onClose} 
+            disabled={isSavingMedia}
+            aria-label="Close" 
+            className="p-1.5 text-neutral-400 hover:text-white rounded-lg disabled:opacity-40"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Upload Progress Overlay */}
+        {isSavingMedia && (
+          <div className="p-4 bg-amber-500/10 border-b border-amber-500/30 flex items-center gap-3 animate-in fade-in">
+            <Loader2 className="w-5 h-5 text-amber-400 animate-spin shrink-0" />
+            <div className="flex-1">
+              <div className="text-xs font-bold text-amber-300">{uploadStatusText}</div>
+              <div className="w-full bg-neutral-800 rounded-full h-1.5 mt-1.5 overflow-hidden">
+                <div 
+                  className="bg-amber-500 h-full transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            </div>
+            <span className="text-xs font-mono font-bold text-amber-400">{uploadProgress}%</span>
+          </div>
+        )}
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-4 sm:p-5 overflow-y-auto space-y-4">
@@ -241,16 +299,16 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
             </div>
           </div>
 
-          {/* Media Upload (IndexedDB 0-Cost Cache or Cloud URL) */}
+          {/* Media Upload (Supabase Cloud Storage) */}
           <div className="space-y-2 p-3 bg-neutral-950 rounded-2xl border border-neutral-800">
             <div className="flex items-center justify-between text-xs font-semibold text-neutral-300">
               <span className="flex items-center gap-1.5">
-                <HardDrive className="w-3.5 h-3.5 text-amber-400" />
-                <span>Media Storage & Video Source</span>
+                <Cloud className="w-3.5 h-3.5 text-amber-400" />
+                <span>Supabase Cloud Video Storage</span>
               </span>
               {fileSizeBytes > 0 && (
                 <span className="text-[10px] text-emerald-400 font-mono">
-                  {formatBytes(fileSizeBytes)} • IndexedDB Cached
+                  {formatBytes(fileSizeBytes)} • Cloud Upload
                 </span>
               )}
             </div>
@@ -259,8 +317,8 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
             <div className="flex gap-2 items-center">
               <label className="flex-1 cursor-pointer bg-neutral-900 hover:bg-neutral-800 border border-dashed border-neutral-700 hover:border-amber-500/60 p-3 rounded-xl flex items-center justify-center gap-2 text-xs text-neutral-300 transition">
                 <Upload className="w-4 h-4 text-amber-400" />
-                <span>
-                  {localFileName ? `Replace: ${localFileName}` : 'Upload from Phone/PC (Auto-Cached in IndexedDB)'}
+                <span className="truncate">
+                  {localFileName ? `Selected: ${localFileName}` : 'Upload MP4/MOV from Phone or PC (Direct to Cloud)'}
                 </span>
                 <input 
                   type="file" 
@@ -271,7 +329,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
               </label>
             </div>
 
-            {/* Or Paste Cloudflare R2 / S3 Direct URL */}
+            {/* Or Paste Direct URL */}
             <div className="pt-1">
               <input
                 type="text"
@@ -280,7 +338,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
                   setMediaUrl(e.target.value);
                   setPendingFileBlob(null);
                 }}
-                placeholder="Or paste Cloudflare R2 / S3 / Google Drive public URL"
+                placeholder="Or paste direct Cloudflare R2 / S3 / public video URL"
                 className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-1.5 text-[11px] text-neutral-300 font-mono focus:outline-none focus:border-amber-500"
               />
             </div>
@@ -494,16 +552,23 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
               type="button"
               onClick={onClose}
               disabled={isSavingMedia}
-              className="flex-1 py-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-xl text-xs font-semibold transition"
+              className="flex-1 py-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-xl text-xs font-semibold transition disabled:opacity-40"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSavingMedia}
-              className="flex-2 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-bold rounded-xl text-xs transition shadow-lg shadow-amber-500/20"
+              className="flex-2 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-bold rounded-xl text-xs transition shadow-lg shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {isSavingMedia ? 'Saving Media...' : initialProject ? 'Save Changes' : 'Create & Generate Review Link'}
+              {isSavingMedia ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Syncing to Supabase...</span>
+                </>
+              ) : (
+                <span>{initialProject ? 'Save Cloud Changes' : 'Upload & Generate Cloud Review Link'}</span>
+              )}
             </button>
           </div>
         </form>

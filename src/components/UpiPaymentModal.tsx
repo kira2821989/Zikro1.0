@@ -10,8 +10,9 @@ import {
   Smartphone, 
   Zap, 
   CreditCard, 
-  AlertCircle,
-  ExternalLink
+  Clock,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { Project } from '../types';
 import { playPaymentSuccessChime, playClickPop } from '../utils/audio';
@@ -20,21 +21,26 @@ interface UpiPaymentModalProps {
   project: Project;
   isOpen: boolean;
   onClose: () => void;
-  onPaymentSuccess: (utrNumber: string, method: string) => void;
+  onSubmitUtr: (utrNumber: string, method: string) => Promise<void> | void;
+  isEditorView?: boolean;
 }
 
 export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
   project,
   isOpen,
   onClose,
-  onPaymentSuccess
+  onSubmitUtr,
+  isEditorView = false
 }) => {
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copiedUpi, setCopiedUpi] = useState(false);
-  const [utrInput, setUtrInput] = useState('');
+  const [utrInput, setUtrInput] = useState(project.paymentDetails?.utrNumber || '');
   const [selectedApp, setSelectedApp] = useState<'any' | 'gpay' | 'phonepe' | 'paytm'>('any');
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(project.status === 'paid_unlocked');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [utrError, setUtrError] = useState('');
+
+  const isPaidUnlocked = project.status === 'paid_unlocked';
+  const isPendingVerification = project.status === 'utr_submitted';
 
   const upiId = project.upiId || 'creator@okhdfcbank';
   const payeeName = project.upiPayeeName || 'Freelance Editor';
@@ -60,6 +66,19 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
     }
   }, [isOpen, upiUri]);
 
+  // Trigger celebration confetti when status turns to paid_unlocked
+  useEffect(() => {
+    if (isOpen && isPaidUnlocked) {
+      playPaymentSuccessChime();
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#f59e0b', '#10b981', '#3b82f6', '#ec4899', '#ffffff']
+      });
+    }
+  }, [isOpen, isPaidUnlocked]);
+
   if (!isOpen) return null;
 
   const handleCopyUpi = () => {
@@ -69,43 +88,28 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
     setTimeout(() => setCopiedUpi(false), 2000);
   };
 
-  const triggerCelebration = () => {
-    setIsSuccess(true);
-    playPaymentSuccessChime();
+  const handleUtrSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUtrError('');
 
-    // Fire festive confetti
-    confetti({
-      particleCount: 100,
-      spread: 70,
-      origin: { y: 0.6 },
-      colors: ['#f59e0b', '#10b981', '#3b82f6', '#ec4899', '#ffffff']
-    });
+    const cleanUtr = utrInput.trim();
+    if (!cleanUtr) {
+      setUtrError('Please enter the 12-digit UPI Reference / UTR number.');
+      return;
+    }
 
-    setTimeout(() => {
-      confetti({
-        particleCount: 50,
-        angle: 60,
-        spread: 55,
-        origin: { x: 0 },
-      });
-      confetti({
-        particleCount: 50,
-        angle: 120,
-        spread: 55,
-        origin: { x: 1 },
-      });
-    }, 250);
-  };
+    if (cleanUtr.length < 6) {
+      setUtrError('Invalid UTR number. Minimum 6 digits required.');
+      return;
+    }
 
-  const handleConfirmPayment = (simulatedUtr?: string) => {
-    const finalUtr = simulatedUtr || utrInput.trim() || `UPI/${Date.now().toString().slice(-8)}/OK`;
-    setIsVerifying(true);
-
-    setTimeout(() => {
-      setIsVerifying(false);
-      triggerCelebration();
-      onPaymentSuccess(finalUtr, selectedApp.toUpperCase());
-    }, 600);
+    setIsSubmitting(true);
+    playClickPop();
+    try {
+      await onSubmitUtr(cleanUtr, selectedApp.toUpperCase());
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -122,10 +126,10 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
               <h2 className="text-base font-bold text-white flex items-center gap-1.5">
                 <span>Instant UPI Unlock</span>
                 <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.2 rounded font-mono font-medium">
-                  ₹0 Commission
+                  Direct Bank UPI
                 </span>
               </h2>
-              <p className="text-xs text-neutral-400">Directly to editor's verified UPI account</p>
+              <p className="text-xs text-neutral-400">Pay directly to editor's verified UPI account</p>
             </div>
           </div>
           <button
@@ -140,23 +144,27 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
         {/* Content Body */}
         <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
           
-          {/* Success State */}
-          {isSuccess ? (
+          {/* STATE 1: Paid & Unlocked by Editor */}
+          {isPaidUnlocked ? (
             <div className="text-center py-6 space-y-4 animate-in zoom-in-95 duration-300">
               <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-500 text-emerald-400 mx-auto flex items-center justify-center shadow-lg shadow-emerald-500/20">
                 <ShieldCheck className="w-9 h-9" />
               </div>
               <div>
-                <h3 className="text-xl font-bold text-white">Payment Verified & Unlocked!</h3>
+                <h3 className="text-xl font-bold text-white">Payment Approved & Video Unlocked!</h3>
                 <p className="text-xs text-neutral-300 mt-1 max-w-xs mx-auto">
-                  The dynamic watermark has been completely removed. Your clean master file is ready for download.
+                  The creator has verified your payment. Dynamic watermark removed and clean master file unlocked.
                 </p>
               </div>
 
-              <div className="p-3 bg-neutral-950 rounded-xl border border-neutral-800 text-left font-mono text-xs space-y-1.5 text-neutral-300">
+              <div className="p-3.5 bg-neutral-950 rounded-xl border border-neutral-800 text-left font-mono text-xs space-y-1.5 text-neutral-300">
                 <div className="flex justify-between">
                   <span className="text-neutral-500">Amount Paid:</span>
                   <span className="text-emerald-400 font-bold">₹{amount.toLocaleString('en-IN')}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-neutral-500">UTR / Ref No:</span>
+                  <span className="text-neutral-200">{project.paymentDetails?.utrNumber || 'VERIFIED'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-neutral-500">Paid To:</span>
@@ -184,11 +192,60 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
                   onClick={onClose}
                   className="w-full text-xs text-neutral-400 hover:text-white py-2"
                 >
-                  Back to Video Player
+                  Return to Video Player
+                </button>
+              </div>
+            </div>
+          ) : isPendingVerification ? (
+            /* STATE 2: UTR Submitted - Strict Anti-Fraud Waiting Screen */
+            <div className="text-center py-6 space-y-4 animate-in zoom-in-95 duration-200">
+              <div className="w-16 h-16 rounded-full bg-amber-500/20 border-2 border-amber-500/60 text-amber-400 mx-auto flex items-center justify-center shadow-lg shadow-amber-500/10 animate-pulse">
+                <Clock className="w-8 h-8" />
+              </div>
+
+              <div>
+                <h3 className="text-lg font-bold text-white">UTR Submitted — Awaiting Verification</h3>
+                <p className="text-xs text-amber-300/90 mt-1 max-w-sm mx-auto leading-relaxed">
+                  Your reference number has been sent to the editor. Video will unlock automatically once they verify the bank credit.
+                </p>
+              </div>
+
+              <div className="p-3.5 bg-neutral-950 rounded-2xl border border-neutral-800 text-left font-mono text-xs space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-neutral-500">Submitted UTR:</span>
+                  <span className="text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                    {project.paymentDetails?.utrNumber || utrInput}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-neutral-500">Amount Due:</span>
+                  <span className="text-white font-bold">₹{amount.toLocaleString('en-IN')}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-neutral-500">Live Auto-Check:</span>
+                  <span className="text-emerald-400 flex items-center gap-1 text-[11px]">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    Polling Supabase Cloud (every 4s)
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 bg-neutral-950/70 border border-neutral-800 rounded-xl text-left text-[11px] text-neutral-400 space-y-1">
+                <div className="font-semibold text-neutral-300">Need it unlocked faster?</div>
+                <div>Ping the editor on WhatsApp with your payment screenshot so they can tap "Approve & Unlock" in their studio.</div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  onClick={onClose}
+                  className="w-full bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold py-2.5 rounded-xl transition"
+                >
+                  Close & Wait on Video Screen
                 </button>
               </div>
             </div>
           ) : (
+            /* STATE 3: Ready to Pay (Scan QR or DeepLink) */
             <>
               {/* Amount Due Pill */}
               <div className="bg-gradient-to-r from-neutral-950 via-neutral-900 to-neutral-950 border border-amber-500/40 p-3.5 rounded-2xl flex items-center justify-between">
@@ -234,21 +291,24 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
                 <div className="grid grid-cols-3 gap-2">
                   <a
                     href={upiUri}
-                    className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 flex flex-col items-center text-center transition"
+                    onClick={() => setSelectedApp('gpay')}
+                    className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 flex flex-col items-center text-center transition active:scale-95"
                   >
                     <Smartphone className="w-4 h-4 text-emerald-400 mb-1" />
                     <span className="text-[11px] font-semibold text-white">Google Pay</span>
                   </a>
                   <a
                     href={upiUri}
-                    className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 flex flex-col items-center text-center transition"
+                    onClick={() => setSelectedApp('phonepe')}
+                    className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 flex flex-col items-center text-center transition active:scale-95"
                   >
                     <Smartphone className="w-4 h-4 text-purple-400 mb-1" />
                     <span className="text-[11px] font-semibold text-white">PhonePe</span>
                   </a>
                   <a
                     href={upiUri}
-                    className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 flex flex-col items-center text-center transition"
+                    onClick={() => setSelectedApp('paytm')}
+                    className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 flex flex-col items-center text-center transition active:scale-95"
                   >
                     <Smartphone className="w-4 h-4 text-sky-400 mb-1" />
                     <span className="text-[11px] font-semibold text-white">Paytm / Any</span>
@@ -275,40 +335,52 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
                 </button>
               </div>
 
-              {/* Payment Confirmation & Instant Verification */}
-              <div className="p-3.5 bg-neutral-950 rounded-2xl border border-neutral-800 space-y-3">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-neutral-300">
-                  <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  <span>After Paying: Confirm to Unlock</span>
+              {/* Anti-Fraud UTR Submission Form (NO FAKE AUTO-UNLOCK) */}
+              <form onSubmit={handleUtrSubmit} className="p-3.5 bg-neutral-950 rounded-2xl border border-neutral-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-neutral-200">
+                    <ShieldCheck className="w-4 h-4 text-amber-400" />
+                    <span>Submit UTR / Ref No. for Unlock</span>
+                  </div>
+                  <span className="text-[10px] text-neutral-500 font-mono">12 Digits</span>
                 </div>
+
+                {utrError && (
+                  <div className="p-2 bg-red-950/60 border border-red-500/40 rounded-lg text-[11px] text-red-300 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{utrError}</span>
+                  </div>
+                )}
 
                 <div className="flex gap-2">
                   <input
                     type="text"
+                    required
                     value={utrInput}
                     onChange={(e) => setUtrInput(e.target.value)}
-                    placeholder="Enter 12-digit UTR / Ref No."
-                    className="flex-1 bg-neutral-900 border border-neutral-700 text-xs text-white rounded-xl px-3 py-2 focus:outline-none focus:border-amber-500 font-mono placeholder:text-neutral-500"
+                    placeholder="Enter 12-digit UTR (e.g. 412389123456)"
+                    className="flex-1 bg-neutral-900 border border-neutral-700 text-xs text-white rounded-xl px-3 py-2.5 focus:outline-none focus:border-amber-500 font-mono placeholder:text-neutral-600"
                   />
                   <button
-                    type="button"
-                    disabled={isVerifying}
-                    onClick={() => handleConfirmPayment()}
-                    className="bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-neutral-950 font-bold px-4 py-2 rounded-xl text-xs transition shrink-0"
+                    type="submit"
+                    disabled={isSubmitting || !utrInput.trim()}
+                    className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-neutral-950 font-black px-4 py-2.5 rounded-xl text-xs transition shrink-0 flex items-center gap-1.5 shadow-md shadow-amber-500/20"
                   >
-                    {isVerifying ? 'Checking...' : 'Submit UTR'}
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Sending...</span>
+                      </>
+                    ) : (
+                      <span>Submit UTR</span>
+                    )}
                   </button>
                 </div>
 
-                {/* Instant Simulation / Demo Button */}
-                <button
-                  type="button"
-                  onClick={() => handleConfirmPayment(`UPI-SIM-${Math.floor(100000 + Math.random() * 900000)}`)}
-                  className="w-full text-center py-2 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition"
-                >
-                  <span>⚡ Quick Demo Unlock (Simulate Instant UPI Confirmation)</span>
-                </button>
-              </div>
+                <div className="text-[10px] text-neutral-400 leading-tight">
+                  🔒 Editor gets alerted immediately in their Zikro Studio to approve & clear watermark.
+                </div>
+              </form>
             </>
           )}
         </div>

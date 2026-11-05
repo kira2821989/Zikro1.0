@@ -1,6 +1,6 @@
 export type MediaType = 'video' | 'thumbnail';
 export type AspectRatio = '9:16' | '16:9' | '1:1';
-export type ProjectStatus = 'draft' | 'in_review' | 'revision_requested' | 'paid_unlocked';
+export type ProjectStatus = 'draft' | 'in_review' | 'revision_requested' | 'utr_submitted' | 'paid_unlocked';
 export type CommentCategory = 'cut' | 'text' | 'audio' | 'color' | 'general';
 export type WatermarkSpeed = 'slow' | 'medium' | 'fast' | 'bouncing';
 export type WatermarkStyle = 'diagonal-floating' | 'bouncing-box' | 'screen-tile' | 'anti-rip-crosshair' | 'ghost-outline' | 'compact-pill';
@@ -50,14 +50,16 @@ export interface SecuritySettings {
 }
 
 export interface StorageInfo {
-  storageType: 'indexeddb' | 'cloud_url';
+  storageType: 'indexeddb' | 'cloud_url' | 'supabase_storage';
   fileSizeBytes?: number;
   originalFileName?: string;
   blobKey?: string;
+  storagePath?: string;
 }
 
 export interface Project {
   id: string;
+  creatorEmail?: string;
   title: string;
   type: MediaType;
   aspectRatio: AspectRatio;
