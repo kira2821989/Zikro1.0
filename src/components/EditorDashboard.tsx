@@ -26,7 +26,8 @@ import {
   Cloud,
   Search,
   LogOut,
-  Settings
+  Settings,
+  Play
 } from 'lucide-react';
 import { Project, CreatorSettings } from '../types';
 import { formatBytes } from '../utils/mediaDb';
@@ -71,6 +72,7 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'utr' | 'pending' | 'revisions' | 'paid'>('all');
+  const [copiedProjectId, setCopiedProjectId] = useState<string | null>(null);
 
   // Calculations
   const pendingAmount = projects
@@ -186,46 +188,12 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
 
       {/* Projects Section Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <span>Client Projects</span>
-            <span className="text-xs font-mono bg-neutral-800 text-neutral-300 px-2 py-0.5 rounded-full">
-              {projects.length}
-            </span>
-          </h2>
-          <div className="flex items-center gap-2 flex-wrap mt-1">
-            <p className="text-xs text-neutral-400">
-              Logged in as <strong className="text-neutral-200">{creatorEmail}</strong>
-              {creatorSettings?.upiId && (
-                <span className="ml-1.5 text-emerald-400 font-mono text-[11px]">
-                  • UPI: {creatorSettings.upiId}
-                </span>
-              )}
-            </p>
-            {onOpenSettings && (
-              <button
-                type="button"
-                onClick={onOpenSettings}
-                className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-2.5 py-0.5 rounded-lg transition"
-                title="Open Account & UPI Payout Settings"
-              >
-                <Settings className="w-3 h-3 text-amber-400" />
-                <span>⚙️ Account Settings</span>
-              </button>
-            )}
-            {onLogout && (
-              <button
-                type="button"
-                onClick={onLogout}
-                className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-950/70 border border-red-500/30 px-2 py-0.5 rounded-lg transition"
-                title="Logout from Creator Studio"
-              >
-                <LogOut className="w-3 h-3" />
-                <span>Logout</span>
-              </button>
-            )}
-          </div>
-        </div>
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          <span>Client Projects</span>
+          <span className="text-xs font-mono bg-neutral-800 text-neutral-300 px-2 py-0.5 rounded-full">
+            {projects.length}
+          </span>
+        </h2>
 
         <div className="flex items-center gap-2">
           <button
@@ -378,6 +346,7 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
             const isPaid = proj.status === 'paid_unlocked';
             const isUtrSubmitted = proj.status === 'utr_submitted';
             const unresolvedComments = proj.comments.filter(c => !c.resolved).length;
+            const isCopied = copiedProjectId === proj.id;
 
             return (
               <div
@@ -394,174 +363,236 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                       : 'bg-neutral-900/70 border-neutral-800/80 hover:border-neutral-700 hover:bg-neutral-900'
                 }`}
               >
-                {/* Card Top: Status & Media badge */}
-                <div className="p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-neutral-400">
-                        {proj.type === 'video' ? <Film className="w-4 h-4 text-amber-400" /> : <ImageIcon className="w-4 h-4 text-purple-400" />}
+                <div>
+                  {/* Visual Media Poster Preview */}
+                  <div className="relative w-full h-36 bg-black object-cover rounded-t-xl overflow-hidden border-b border-neutral-800/80">
+                    {proj.mediaUrl && proj.type === 'video' ? (
+                      <>
+                        <video
+                          src={`${proj.mediaUrl}#t=0.5`}
+                          preload="metadata"
+                          muted
+                          playsInline
+                          className="w-full h-full object-cover opacity-85 group-hover:scale-105 transition duration-300"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/90 via-neutral-950/20 to-black/40 pointer-events-none" />
+                        {/* Center Play Overlay Icon */}
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                          <div className="w-10 h-10 rounded-full bg-neutral-950/75 border border-amber-400/50 text-amber-400 flex items-center justify-center shadow-lg group-hover:scale-110 group-hover:bg-amber-500 group-hover:text-neutral-950 transition duration-200">
+                            <Play className="w-4 h-4 fill-current ml-0.5" />
+                          </div>
+                        </div>
+                      </>
+                    ) : proj.mediaUrl && proj.type === 'thumbnail' ? (
+                      <>
+                        <img
+                          src={proj.mediaUrl}
+                          alt={proj.title}
+                          className="w-full h-full object-cover opacity-85 group-hover:scale-105 transition duration-300"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/90 via-transparent to-black/40 pointer-events-none" />
+                      </>
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-neutral-950 text-neutral-600 gap-1.5">
+                        {proj.type === 'video' ? (
+                          <Film className="w-7 h-7 text-neutral-700" />
+                        ) : (
+                          <ImageIcon className="w-7 h-7 text-neutral-700" />
+                        )}
+                        <span className="text-[10px] font-mono text-neutral-500">No Media Preview</span>
+                      </div>
+                    )}
+
+                    {/* Top-Left Overlay Badges: Aspect Ratio + Version + Cloud/Local */}
+                    <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 flex-wrap">
+                      <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase bg-neutral-950/85 backdrop-blur-md text-neutral-200 border border-neutral-700/80 px-2 py-0.5 rounded-md font-bold">
+                        {proj.type === 'video' ? (
+                          <Film className="w-3 h-3 text-amber-400" />
+                        ) : (
+                          <ImageIcon className="w-3 h-3 text-purple-400" />
+                        )}
+                        <span>{proj.aspectRatio}</span>
                       </span>
-                      <span className="text-[11px] font-mono uppercase text-neutral-400">
-                        {proj.aspectRatio}
-                      </span>
-                      {/* Version badge (Workflow Feature #4) */}
-                      <span className="text-[10px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 px-1.5 py-0.2 rounded">
+                      <span className="text-[10px] font-mono font-bold bg-neutral-950/85 backdrop-blur-md text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded-md">
                         v{proj.version || 1}
                       </span>
                       {proj.storageInfo?.storageType === 'indexeddb' || !proj.mediaUrl || proj.mediaUrl.startsWith('blob:') ? (
-                        <span className="text-[10px] text-amber-300 bg-amber-500/15 border border-amber-500/40 px-1.5 py-0.2 rounded font-mono flex items-center gap-1">
-                          <span>⚠️ Local Only (Re-upload &lt;50MB for Cloud)</span>
+                        <span className="text-[10px] text-amber-300 bg-neutral-950/90 border border-amber-500/40 px-1.5 py-0.5 rounded-md font-mono">
+                          ⚠️ Local
                         </span>
                       ) : proj.storageInfo?.storageType === 'supabase_storage' ? (
-                        <span className="text-[10px] text-sky-400 font-mono flex items-center gap-0.5">
-                          <Cloud className="w-3 h-3" />
+                        <span className="text-[10px] text-sky-400 bg-neutral-950/85 border border-sky-500/30 px-1.5 py-0.5 rounded-md font-mono flex items-center gap-0.5">
+                          <Cloud className="w-2.5 h-2.5" />
                           <span>Cloud</span>
                         </span>
                       ) : null}
                     </div>
 
-                    {/* Status Pill */}
-                    {isUtrSubmitted ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-black bg-amber-500 text-neutral-950 px-2 py-0.5 rounded-full shadow-md">
-                        <Zap className="w-3 h-3 fill-current" />
-                        <span>UTR SUBMITTED</span>
-                      </span>
-                    ) : isPaid ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">
-                        <ShieldCheck className="w-3 h-3" />
-                        <span>PAID & UNLOCKED</span>
-                      </span>
-                    ) : unresolvedComments > 0 ? (
-                      <span 
+                    {/* Top-Right Status Pill */}
+                    <div className="absolute top-2.5 right-2.5">
+                      {isUtrSubmitted ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-black bg-amber-500 text-neutral-950 px-2 py-0.5 rounded-full shadow-md">
+                          <Zap className="w-3 h-3 fill-current" />
+                          <span>UTR SUBMITTED</span>
+                        </span>
+                      ) : isPaid ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-950/90 backdrop-blur-md text-emerald-300 border border-emerald-500/50 px-2 py-0.5 rounded-full">
+                          <ShieldCheck className="w-3 h-3" />
+                          <span>PAID & UNLOCKED</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-neutral-950/85 backdrop-blur-md text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full">
+                          <Lock className="w-3 h-3" />
+                          <span>Pending Payment</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Bottom-Left Amber Unresolved Revision Notes Badge */}
+                    {unresolvedComments > 0 && (
+                      <div
                         onClick={(e) => {
                           e.stopPropagation();
                           onSelectProject(proj.id);
                           onSwitchToClientMode(proj.id);
                         }}
-                        className="inline-flex items-center gap-1 text-[10px] font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/40 px-2 py-0.5 rounded-full hover:bg-sky-500/30 transition cursor-pointer"
-                        title="Click to view client timestamp notes"
+                        title="Click to review client revision notes"
+                        className="absolute bottom-2.5 left-2.5 inline-flex items-center gap-1 text-[11px] font-bold bg-amber-500 text-neutral-950 px-2.5 py-0.5 rounded-full shadow-lg hover:bg-amber-400 transition"
                       >
-                        <Clock className="w-3 h-3" />
-                        <span>{unresolvedComments} Revisions</span>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full">
-                        <Lock className="w-3 h-3" />
-                        <span>Pending Payment</span>
-                      </span>
+                        <span>🔔 {unresolvedComments} Revision Note{unresolvedComments > 1 ? 's' : ''}</span>
+                      </div>
                     )}
                   </div>
 
-                  {/* Title & Client */}
-                  <div>
-                    <h3 className="font-bold text-sm text-white group-hover:text-amber-400 transition line-clamp-1">
-                      {proj.title}
-                    </h3>
-                    <div className="text-xs text-neutral-400 mt-0.5 flex items-center justify-between">
-                      <span className="truncate">Client: <strong className="text-neutral-300 font-medium">{proj.clientName}</strong></span>
+                  {/* Card Body: Title, Client, Fee & Protection */}
+                  <div className="p-4 space-y-3">
+                    {/* Title & Client */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h3 className="font-bold text-sm text-white group-hover:text-amber-400 transition line-clamp-1">
+                          {proj.title}
+                        </h3>
+                        <div className="text-xs text-neutral-400 mt-0.5 truncate">
+                          Client: <strong className="text-neutral-200 font-medium">{proj.clientName}</strong>
+                        </div>
+                      </div>
                     </div>
+
+                    {/* Fee & Security preview */}
+                    <div className="p-2.5 bg-neutral-950/70 rounded-xl border border-neutral-800/80 flex items-center justify-between text-xs font-mono">
+                      <div>
+                        <span className="text-[10px] text-neutral-500 block">Fee Due</span>
+                        <span className="font-bold text-amber-400 text-sm">₹{proj.amountINR.toLocaleString('en-IN')}</span>
+                      </div>
+                      <div className="text-right flex flex-col items-end">
+                        <span className="text-[10px] text-neutral-500 block">Protection</span>
+                        {proj.securitySettings?.isProtected ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-amber-300 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
+                            <KeyRound className="w-2.5 h-2.5 text-amber-400" />
+                            <span>PIN: {proj.securitySettings.passcode}</span>
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-neutral-400">Direct Link</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* ================= UTR APPROVAL / REJECTION CARD ================= */}
+                    {isUtrSubmitted && (
+                      <div className="p-3 bg-amber-950/40 border border-amber-500/50 rounded-xl space-y-2 animate-in fade-in">
+                        {/* Bouncing Amber Alert */}
+                        <div className="flex items-center gap-1.5 text-xs text-amber-950 font-bold bg-amber-400 px-2.5 py-1.5 rounded-lg animate-bounce shadow-md">
+                          <Zap className="w-3.5 h-3.5 fill-current shrink-0" />
+                          <span>⚡ NEW UTR SUBMITTED! Verify bank credit.</span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-amber-300 font-semibold flex items-center gap-1">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                            <span>Client Submitted UTR:</span>
+                          </span>
+                          <span className="font-mono font-bold text-white bg-black/60 px-2 py-0.5 rounded border border-amber-500/30">
+                            {proj.paymentDetails?.utrNumber || 'N/A'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onApproveUpiPayment(proj.id);
+                            }}
+                            className="inline-flex items-center justify-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 px-2 rounded-lg text-xs transition shadow-md"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Approve & Unlock</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Reject UTR "${proj.paymentDetails?.utrNumber}" as invalid or unpaid?`)) {
+                                onRejectUpiPayment(proj.id);
+                              }
+                            }}
+                            className="inline-flex items-center justify-center gap-1 bg-red-950/80 hover:bg-red-900 border border-red-500/50 text-red-300 font-semibold py-1.5 px-2 rounded-lg text-xs transition"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            <span>Reject Fake UTR</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-
-                  {/* Fee & Security preview */}
-                  <div className="p-2.5 bg-neutral-950/70 rounded-xl border border-neutral-800/80 flex items-center justify-between text-xs font-mono">
-                    <div>
-                      <span className="text-[10px] text-neutral-500 block">Fee Due</span>
-                      <span className="font-bold text-amber-400 text-sm">₹{proj.amountINR.toLocaleString('en-IN')}</span>
-                    </div>
-                    <div className="text-right flex flex-col items-end">
-                      <span className="text-[10px] text-neutral-500 block">Protection</span>
-                      {proj.securitySettings?.isProtected ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] text-amber-300 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
-                          <KeyRound className="w-2.5 h-2.5 text-amber-400" />
-                          <span>PIN: {proj.securitySettings.passcode}</span>
-                        </span>
-                      ) : (
-                        <span className="text-[11px] text-neutral-400">Direct Link</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* ================= UTR APPROVAL / REJECTION CARD ================= */}
-                  {isUtrSubmitted && (
-                    <div className="p-3 bg-amber-950/40 border border-amber-500/50 rounded-xl space-y-2 animate-in fade-in">
-                      {/* Bouncing Amber Alert */}
-                      <div className="flex items-center gap-1.5 text-xs text-amber-950 font-bold bg-amber-400 px-2.5 py-1.5 rounded-lg animate-bounce shadow-md">
-                        <Zap className="w-3.5 h-3.5 fill-current shrink-0" />
-                        <span>⚡ NEW UTR SUBMITTED! Verify bank credit.</span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-amber-300 font-semibold flex items-center gap-1">
-                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                          <span>Client Submitted UTR:</span>
-                        </span>
-                        <span className="font-mono font-bold text-white bg-black/60 px-2 py-0.5 rounded border border-amber-500/30">
-                          {proj.paymentDetails?.utrNumber || 'N/A'}
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onApproveUpiPayment(proj.id);
-                          }}
-                          className="inline-flex items-center justify-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 px-2 rounded-lg text-xs transition shadow-md"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Approve & Unlock</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (confirm(`Reject UTR "${proj.paymentDetails?.utrNumber}" as invalid or unpaid?`)) {
-                              onRejectUpiPayment(proj.id);
-                            }
-                          }}
-                          className="inline-flex items-center justify-center gap-1 bg-red-950/80 hover:bg-red-900 border border-red-500/50 text-red-300 font-semibold py-1.5 px-2 rounded-lg text-xs transition"
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                          <span>Reject Fake UTR</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
-                {/* Card Footer: Quick Actions */}
-                <div className="p-3 bg-neutral-950/50 border-t border-neutral-800/80 flex items-center justify-between gap-1 text-xs">
-                  {/* Switch to Client View */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectProject(proj.id);
-                      onSwitchToClientMode(proj.id);
-                    }}
-                    title="View as Client"
-                    className="inline-flex items-center gap-1 text-neutral-300 hover:text-amber-300 font-medium py-1 px-2 rounded-lg hover:bg-neutral-800 transition"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>Preview</span>
-                  </button>
+                {/* Card Footer: Clear Primary & High-Priority Action Buttons + Secondary Tooltips */}
+                <div className="p-3 bg-neutral-950/60 border-t border-neutral-800/80 flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    {/* Primary Button: Review */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectProject(proj.id);
+                        onSwitchToClientMode(proj.id);
+                      }}
+                      title="Open Interactive Client Review Player"
+                      className="inline-flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 text-white font-semibold py-1.5 px-2.5 rounded-lg border border-neutral-700 transition"
+                    >
+                      <span>👁️ Review</span>
+                    </button>
 
-                  <div className="flex items-center gap-1">
-                    {/* Copy Client Link */}
+                    {/* High-Priority Button: Copy Link */}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onCopyClientLink(proj.id);
+                        setCopiedProjectId(proj.id);
+                        setTimeout(() => {
+                          setCopiedProjectId(prev => (prev === proj.id ? null : prev));
+                        }, 2000);
                       }}
                       title="Copy Secret Review Link for Client"
-                      className="p-1.5 text-neutral-400 hover:text-amber-400 hover:bg-neutral-800 rounded-lg transition"
+                      className={`inline-flex items-center gap-1 font-bold py-1.5 px-2.5 rounded-lg border transition ${
+                        isCopied
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                          : 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/30'
+                      }`}
                     >
-                      <Copy className="w-3.5 h-3.5" />
+                      {isCopied ? (
+                        <span>✓ Copied!</span>
+                      ) : (
+                        <span>📋 Copy Link</span>
+                      )}
                     </button>
+                  </div>
 
+                  {/* Secondary Icon Actions with Tooltips */}
+                  <div className="flex items-center gap-0.5">
                     {/* WhatsApp */}
                     <button
                       type="button"
@@ -569,7 +600,7 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                         e.stopPropagation();
                         onOpenWhatsAppModal(proj);
                       }}
-                      title="Send WhatsApp Update"
+                      title="Share on WhatsApp"
                       className="p-1.5 text-neutral-400 hover:text-emerald-400 hover:bg-neutral-800 rounded-lg transition"
                     >
                       <MessageSquare className="w-3.5 h-3.5" />
@@ -595,7 +626,7 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                         e.stopPropagation();
                         onOpenEditModal(proj);
                       }}
-                      title="Edit Settings"
+                      title="Edit Project Settings"
                       className="p-1.5 text-neutral-400 hover:text-amber-400 hover:bg-neutral-800 rounded-lg transition"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
@@ -610,7 +641,7 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                           onDeleteProject(proj.id);
                         }
                       }}
-                      title="Delete"
+                      title="Delete Project"
                       className="p-1.5 text-neutral-500 hover:text-red-400 hover:bg-neutral-800 rounded-lg transition"
                     >
                       <Trash2 className="w-3.5 h-3.5" />

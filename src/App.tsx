@@ -153,7 +153,24 @@ export default function App() {
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
   const [isProjectFormOpen, setIsProjectFormOpen] = useState(false);
   const [isAccountSettingsOpen, setIsAccountSettingsOpen] = useState(false);
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close profile dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) {
+        setIsProfileMenuOpen(false);
+      }
+    };
+    if (isProfileMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isProfileMenuOpen]);
 
   // Creator permanent Account & Payout Settings
   const [creatorSettings, setCreatorSettings] = useState<CreatorSettings>(() =>
@@ -635,6 +652,7 @@ export default function App() {
     setActiveProjectId('');
     setIsProjectFormOpen(false);
     setIsAccountSettingsOpen(false);
+    setIsProfileMenuOpen(false);
     setEditingProject(null);
     setIsWhatsAppOpen(false);
     setIsInvoiceOpen(false);
@@ -768,142 +786,83 @@ export default function App() {
           <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3">
             
             {/* Creator Logo & Studio Badge */}
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-600 flex items-center justify-center text-neutral-950 font-black shadow-lg shadow-amber-500/20">
-                  <Lock className="w-5 h-5" />
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-600 flex items-center justify-center text-neutral-950 font-black shadow-lg shadow-amber-500/20">
+                <Lock className="w-5 h-5" />
+              </div>
+              <div className="leading-tight">
+                <div className="font-extrabold text-base tracking-tight flex items-center gap-1.5">
+                  <span>ZIK<span className="text-amber-400">RO</span></span>
+                  <span className="text-[10px] bg-amber-500/15 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono font-bold tracking-wider">
+                    CREATOR STUDIO
+                  </span>
                 </div>
-                <div className="leading-tight">
-                  <div className="font-extrabold text-base tracking-tight flex items-center gap-1.5">
-                    <span>ZIK<span className="text-amber-400">RO</span></span>
-                    <span className="text-[10px] bg-amber-500/15 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono font-bold tracking-wider">
-                      CREATOR STUDIO
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-neutral-400 font-mono hidden sm:block">
-                    Freelancer Workspace • Anti-Ghosting UPI
-                  </div>
+                <div className="text-[10px] text-neutral-400 font-mono hidden sm:block">
+                  Freelancer Workspace • Anti-Ghosting UPI
                 </div>
               </div>
-
-              {/* Project Switcher for Creator (only shown when creator has projects) */}
-              {projects.length > 0 && (
-                <div className="relative hidden md:block ml-2">
-                  <select
-                    value={activeProjectId}
-                    onChange={(e) => {
-                      setActiveProjectId(e.target.value);
-                      playClickPop();
-                    }}
-                    className="bg-neutral-900 border border-neutral-700/80 hover:border-amber-500 text-neutral-200 text-xs rounded-xl px-3 py-1.5 pr-8 appearance-none focus:outline-none cursor-pointer max-w-[210px] truncate"
-                  >
-                    {projects.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.title} (₹{p.amountINR})
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-neutral-400 absolute right-2.5 top-2.5 pointer-events-none" />
-                </div>
-              )}
             </div>
 
-            {/* Creator Studio Right Actions */}
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              
-              {/* Creator Account Pill with Settings & Logout (Always visible on mobile & desktop) */}
-              <div className="flex items-center gap-1.5 text-xs text-neutral-300 bg-neutral-900 border border-neutral-800 rounded-xl px-2 sm:px-2.5 py-1.5">
-                <User className="w-3.5 h-3.5 text-amber-400 hidden lg:block" />
-                <span className="hidden lg:inline truncate max-w-[130px] font-mono text-[11px]">{creatorEmail}</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAccountSettingsOpen(true);
-                    playClickPop();
-                  }}
-                  title="Account & UPI Payout Settings"
-                  className="text-neutral-300 hover:text-amber-400 px-1.5 py-0.5 rounded-lg hover:bg-neutral-800 transition flex items-center gap-1"
-                >
-                  <Settings className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="text-[11px] font-semibold">Settings</span>
-                </button>
-                <span className="text-neutral-700">|</span>
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  title="Logout from Creator Studio"
-                  className="text-neutral-400 hover:text-red-400 px-1 py-0.5 rounded transition flex items-center gap-1"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span className="lg:hidden text-[11px] font-semibold">Logout</span>
-                </button>
-              </div>
-
-              {/* Preview as Client button */}
-              {activeProject && (
-                <button
-                  onClick={() => {
-                    setViewMode('client');
-                    setIsCreatorPreviewingClient(true);
-                    playClickPop();
-                  }}
-                  title="See exactly what client sees on their screen"
-                  className="inline-flex items-center gap-1.5 text-xs bg-neutral-900 hover:bg-neutral-800 border border-amber-500/40 text-amber-300 font-semibold px-2.5 sm:px-3 py-1.5 rounded-xl transition shadow-sm"
-                >
-                  <Eye className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="sm:hidden">Preview</span>
-                  <span className="hidden sm:inline">Preview Client View</span>
-                </button>
-              )}
-
-              {/* Copy Client Link */}
-              {activeProject && (
-                <button
-                  onClick={() => handleCopyClientLink()}
-                  title="Copy secret review link to send client"
-                  className="inline-flex items-center gap-1.5 text-xs bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 px-2.5 sm:px-3 py-1.5 rounded-xl transition"
-                >
-                  {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-amber-400" />}
-                  <span className="hidden sm:inline">{copiedLink ? 'Copied Link!' : 'Copy Link'}</span>
-                </button>
-              )}
-
-              {/* WhatsApp Share */}
-              {activeProject && (
-                <button
-                  onClick={() => setIsWhatsAppOpen(true)}
-                  title="Share via WhatsApp"
-                  className="inline-flex items-center gap-1.5 text-xs bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 px-2.5 sm:px-3 py-1.5 rounded-xl transition font-medium"
-                >
-                  <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="hidden sm:inline">WhatsApp</span>
-                </button>
-              )}
-
-              {/* Invoice Generator */}
-              {activeProject && (
-                <button
-                  onClick={() => setIsInvoiceOpen(true)}
-                  title="Generate GST-Exempt Freelance Invoice"
-                  className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition"
-                >
-                  <FileText className="w-4 h-4" />
-                </button>
-              )}
-
-              {/* New Project CTA */}
+            {/* Creator Studio Top-Right: Single Golden Profile Avatar Button + Dropdown Menu */}
+            <div className="relative" ref={profileMenuRef}>
               <button
+                type="button"
                 onClick={() => {
-                  setEditingProject(null);
-                  setIsProjectFormOpen(true);
+                  setIsProfileMenuOpen(prev => !prev);
                   playClickPop();
                 }}
-                title="Create New Client Project"
-                className="inline-flex items-center gap-1 text-xs bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold px-3.5 py-1.5 rounded-xl transition shadow-md shadow-amber-500/20 active:scale-95"
+                title="Creator Account Menu"
+                aria-label="Creator Account Menu"
+                aria-expanded={isProfileMenuOpen}
+                className="w-[38px] h-[38px] rounded-full bg-gradient-to-tr from-amber-400 via-amber-500 to-amber-600 text-neutral-950 font-black text-base flex items-center justify-center shadow-lg shadow-amber-500/25 ring-2 ring-amber-400/30 hover:ring-amber-400/70 active:scale-95 transition cursor-pointer select-none"
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span>New Project</span>
+                {(creatorSettings?.upiPayeeName?.trim()?.[0] || creatorEmail?.trim()?.[0] || 'K').toUpperCase()}
               </button>
+
+              {isProfileMenuOpen && (
+                <div className="absolute right-0 mt-2.5 w-64 rounded-2xl bg-neutral-900 border border-neutral-800 shadow-2xl shadow-black/80 py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  {/* Creator Email & Active Status */}
+                  <div className="px-4 py-2.5 border-b border-neutral-800/80">
+                    <div className="text-xs font-mono text-neutral-300 truncate">{creatorEmail}</div>
+                    <div className="text-[11px] font-semibold text-emerald-400 mt-1 flex items-center gap-1.5">
+                      <span>●</span>
+                      <span>Studio Active</span>
+                    </div>
+                  </div>
+
+                  {/* Menu Item 1: Account Settings */}
+                  <div className="py-1 px-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAccountSettingsOpen(true);
+                        setIsProfileMenuOpen(false);
+                        playClickPop();
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-neutral-200 hover:text-amber-300 hover:bg-neutral-800/90 transition flex items-center gap-2"
+                    >
+                      <span>⚙️ Account Settings</span>
+                    </button>
+                  </div>
+
+                  {/* Divider */}
+                  <div className="my-1 border-t border-neutral-800" />
+
+                  {/* Menu Item 2: Logout */}
+                  <div className="py-1 px-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileMenuOpen(false);
+                        handleLogout();
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-red-400 hover:text-red-300 hover:bg-red-950/40 transition flex items-center gap-2"
+                    >
+                      <span>🚪 Logout</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </header>
@@ -989,8 +948,8 @@ export default function App() {
         </header>
       )}
 
-      {/* 3. STATUS BAR (Explaining watermark / unlocked status - Hidden when PIN is locked) */}
-      {activeProject && !isPinLocked && (
+      {/* 3. STATUS BAR (Explaining watermark / unlocked status - Only shown in Client Review mode & hidden when PIN is locked) */}
+      {viewMode === 'client' && activeProject && !isPinLocked && (
         <div className={`w-full py-2 px-4 text-xs font-medium border-b flex items-center justify-between flex-wrap gap-2 transition-colors ${
           isPaidUnlocked 
             ? 'bg-emerald-950/60 border-emerald-800 text-emerald-200' 
