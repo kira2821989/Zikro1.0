@@ -84,3 +84,12 @@ export interface Project {
   paymentDetails?: PaymentDetails;
   notes?: string;
 }
+
+export interface CreatorSettings {
+  upiPayeeName: string;
+  upiId: string;
+  editorPhone: string;
+  defaultWatermarkText: string;
+  autoFillUpi: boolean;
+}
+

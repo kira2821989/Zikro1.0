@@ -25,9 +25,10 @@ import {
   XCircle,
   Cloud,
   Search,
-  LogOut
+  LogOut,
+  Settings
 } from 'lucide-react';
-import { Project } from '../types';
+import { Project, CreatorSettings } from '../types';
 import { formatBytes } from '../utils/mediaDb';
 import { playClickPop } from '../utils/audio';
 
@@ -35,6 +36,7 @@ interface EditorDashboardProps {
   projects: Project[];
   activeProjectId: string;
   creatorEmail: string;
+  creatorSettings?: CreatorSettings;
   onSelectProject: (id: string) => void;
   onOpenCreateModal: () => void;
   onOpenEditModal: (project: Project) => void;
@@ -46,12 +48,14 @@ interface EditorDashboardProps {
   onApproveUpiPayment: (projectId: string) => Promise<void> | void;
   onRejectUpiPayment: (projectId: string) => Promise<void> | void;
   onLogout?: () => void;
+  onOpenSettings?: () => void;
 }
 
 export const EditorDashboard: React.FC<EditorDashboardProps> = ({
   projects,
   activeProjectId,
   creatorEmail,
+  creatorSettings,
   onSelectProject,
   onOpenCreateModal,
   onOpenEditModal,
@@ -62,7 +66,8 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
   onCopyClientLink,
   onApproveUpiPayment,
   onRejectUpiPayment,
-  onLogout
+  onLogout,
+  onOpenSettings
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'utr' | 'pending' | 'revisions' | 'paid'>('all');
@@ -188,10 +193,26 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
               {projects.length}
             </span>
           </h2>
-          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+          <div className="flex items-center gap-2 flex-wrap mt-1">
             <p className="text-xs text-neutral-400">
-              Logged in as <strong className="text-neutral-200">{creatorEmail}</strong> • Synced to Supabase Cloud
+              Logged in as <strong className="text-neutral-200">{creatorEmail}</strong>
+              {creatorSettings?.upiId && (
+                <span className="ml-1.5 text-emerald-400 font-mono text-[11px]">
+                  • UPI: {creatorSettings.upiId}
+                </span>
+              )}
             </p>
+            {onOpenSettings && (
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-2.5 py-0.5 rounded-lg transition"
+                title="Open Account & UPI Payout Settings"
+              >
+                <Settings className="w-3 h-3 text-amber-400" />
+                <span>⚙️ Account Settings</span>
+              </button>
+            )}
             {onLogout && (
               <button
                 type="button"

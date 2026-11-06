@@ -29,10 +29,11 @@ import {
   User,
   Clock,
   Cloud,
-  Loader2
+  Loader2,
+  Settings
 } from 'lucide-react';
 
-import { Project, ProjectComment, ProjectStatus } from './types';
+import { Project, ProjectComment, ProjectStatus, CreatorSettings } from './types';
 import { VideoPlayerWithTimeline } from './components/VideoPlayerWithTimeline';
 import { ThumbnailReviewer } from './components/ThumbnailReviewer';
 import { TimestampComments } from './components/TimestampComments';
@@ -43,6 +44,7 @@ import { ProjectFormModal } from './components/ProjectFormModal';
 import { EditorDashboard } from './components/EditorDashboard';
 import { PasscodeLockModal } from './components/PasscodeLockModal';
 import { CreatorAuthScreen } from './components/CreatorAuthScreen';
+import { AccountSettingsModal } from './components/AccountSettingsModal';
 import { 
   fetchProjectById, 
   fetchCreatorProjects, 
@@ -51,7 +53,9 @@ import {
   updateProjectCommentsInSupabase,
   deleteProjectFromSupabase,
   deleteMediaFromSupabase,
-  verifyCreatorSession 
+  verifyCreatorSession,
+  loadCreatorSettings,
+  saveCreatorSettings
 } from './supabase';
 import { getMediaBlobUrl, deleteMediaBlob } from './utils/mediaDb';
 import { playClickPop, playPaymentSuccessChime, playAlertChime } from './utils/audio';
@@ -148,7 +152,26 @@ export default function App() {
   const [isWhatsAppOpen, setIsWhatsAppOpen] = useState(false);
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
   const [isProjectFormOpen, setIsProjectFormOpen] = useState(false);
+  const [isAccountSettingsOpen, setIsAccountSettingsOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
+
+  // Creator permanent Account & Payout Settings
+  const [creatorSettings, setCreatorSettings] = useState<CreatorSettings>(() =>
+    loadCreatorSettings(creatorEmail || '')
+  );
+
+  useEffect(() => {
+    if (creatorEmail) {
+      setCreatorSettings(loadCreatorSettings(creatorEmail));
+    }
+  }, [creatorEmail]);
+
+  const handleSaveAccountSettings = async (newSettings: CreatorSettings) => {
+    setCreatorSettings(newSettings);
+    if (creatorEmail) {
+      await saveCreatorSettings(creatorEmail, newSettings);
+    }
+  };
 
   // Session-cached unlocked PIN project IDs
   const [unlockedPinProjects, setUnlockedPinProjects] = useState<Set<string>>(() => {
@@ -611,6 +634,7 @@ export default function App() {
     setProjects([]);
     setActiveProjectId('');
     setIsProjectFormOpen(false);
+    setIsAccountSettingsOpen(false);
     setEditingProject(null);
     setIsWhatsAppOpen(false);
     setIsInvoiceOpen(false);
@@ -787,14 +811,28 @@ export default function App() {
             {/* Creator Studio Right Actions */}
             <div className="flex items-center gap-1.5 sm:gap-2">
               
-              {/* Creator Account Pill with Logout (Always visible on mobile & desktop) */}
+              {/* Creator Account Pill with Settings & Logout (Always visible on mobile & desktop) */}
               <div className="flex items-center gap-1.5 text-xs text-neutral-300 bg-neutral-900 border border-neutral-800 rounded-xl px-2 sm:px-2.5 py-1.5">
                 <User className="w-3.5 h-3.5 text-amber-400 hidden lg:block" />
                 <span className="hidden lg:inline truncate max-w-[130px] font-mono text-[11px]">{creatorEmail}</span>
                 <button
+                  type="button"
+                  onClick={() => {
+                    setIsAccountSettingsOpen(true);
+                    playClickPop();
+                  }}
+                  title="Account & UPI Payout Settings"
+                  className="text-neutral-300 hover:text-amber-400 px-1.5 py-0.5 rounded-lg hover:bg-neutral-800 transition flex items-center gap-1"
+                >
+                  <Settings className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-[11px] font-semibold">Settings</span>
+                </button>
+                <span className="text-neutral-700">|</span>
+                <button
+                  type="button"
                   onClick={handleLogout}
                   title="Logout from Creator Studio"
-                  className="text-neutral-400 hover:text-red-400 p-0.5 rounded transition flex items-center gap-1"
+                  className="text-neutral-400 hover:text-red-400 px-1 py-0.5 rounded transition flex items-center gap-1"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   <span className="lg:hidden text-[11px] font-semibold">Logout</span>
@@ -1040,6 +1078,7 @@ export default function App() {
             projects={projects}
             activeProjectId={activeProjectId}
             creatorEmail={creatorEmail || ''}
+            creatorSettings={creatorSettings}
             onSelectProject={(id) => setActiveProjectId(id)}
             onOpenCreateModal={() => {
               setEditingProject(null);
@@ -1070,6 +1109,10 @@ export default function App() {
             onApproveUpiPayment={handleApproveUpiPayment}
             onRejectUpiPayment={handleRejectUpiPayment}
             onLogout={handleLogout}
+            onOpenSettings={() => {
+              setIsAccountSettingsOpen(true);
+              playClickPop();
+            }}
           />
         ) : !activeProject ? (
           /* Client View: No Project Found */
@@ -1282,6 +1325,16 @@ export default function App() {
         onSave={handleSaveProject}
         initialProject={editingProject}
         creatorEmail={creatorEmail || ''}
+        creatorSettings={creatorSettings}
+        onUpdateCreatorSettings={handleSaveAccountSettings}
+      />
+
+      <AccountSettingsModal
+        isOpen={isAccountSettingsOpen}
+        onClose={() => setIsAccountSettingsOpen(false)}
+        creatorEmail={creatorEmail || ''}
+        settings={creatorSettings}
+        onSaveSettings={handleSaveAccountSettings}
       />
     </div>
   );

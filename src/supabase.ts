@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { Project, ProjectComment, ProjectStatus, PaymentDetails } from './types';
+import { Project, ProjectComment, ProjectStatus, PaymentDetails, CreatorSettings } from './types';
 
 export const SUPABASE_URL = "https://easjlnghchnzlzvljcxd.supabase.co";
 export const SUPABASE_ANON_KEY = "sb_publishable_d_ZQBnYZIalJu8VMljRf0g_V7mRtHc5";
@@ -7,6 +7,78 @@ export const SUPABASE_ANON_KEY = "sb_publishable_d_ZQBnYZIalJu8VMljRf0g_V7mRtHc5
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export const STORAGE_BUCKET = 'videos';
+
+export function getCreatorSettingsKey(email: string): string {
+  return `zikro_creator_settings_${email.toLowerCase().trim()}`;
+}
+
+export function loadCreatorSettings(email: string): CreatorSettings {
+  const cleanEmail = (email || '').toLowerCase().trim();
+  const defaultName = cleanEmail ? cleanEmail.split('@')[0] : 'Creator';
+
+  const fallback: CreatorSettings = {
+    upiPayeeName: defaultName,
+    upiId: '',
+    editorPhone: '',
+    defaultWatermarkText: 'ZIKRO • DRAFT REVIEW',
+    autoFillUpi: true
+  };
+
+  if (!cleanEmail || typeof window === 'undefined') return fallback;
+
+  try {
+    const raw = localStorage.getItem(getCreatorSettingsKey(cleanEmail));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        upiPayeeName: parsed.upiPayeeName || defaultName,
+        upiId: parsed.upiId || '',
+        editorPhone: parsed.editorPhone || '',
+        defaultWatermarkText: parsed.defaultWatermarkText || 'ZIKRO • DRAFT REVIEW',
+        autoFillUpi: parsed.autoFillUpi ?? true
+      };
+    }
+
+    // Migrate from legacy per-field keys if present
+    const legacyUpi = localStorage.getItem(`zikro_saved_upi_${cleanEmail}`) || '';
+    const legacyName = localStorage.getItem(`zikro_saved_name_${cleanEmail}`) || defaultName;
+    const legacyPhone = localStorage.getItem(`zikro_saved_editor_phone_${cleanEmail}`) || '';
+
+    return {
+      upiPayeeName: legacyName,
+      upiId: legacyUpi === 'editor@okhdfcbank' ? '' : legacyUpi,
+      editorPhone: legacyPhone,
+      defaultWatermarkText: 'ZIKRO • DRAFT REVIEW',
+      autoFillUpi: true
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export async function saveCreatorSettings(email: string, settings: CreatorSettings): Promise<void> {
+  const cleanEmail = (email || '').toLowerCase().trim();
+  if (!cleanEmail || typeof window === 'undefined') return;
+
+  const normalized: CreatorSettings = {
+    upiPayeeName: settings.upiPayeeName.trim() || cleanEmail.split('@')[0] || 'Creator',
+    upiId: settings.upiId.trim(),
+    editorPhone: settings.editorPhone.trim(),
+    defaultWatermarkText: settings.defaultWatermarkText.trim() || 'ZIKRO • DRAFT REVIEW',
+    autoFillUpi: settings.autoFillUpi
+  };
+
+  try {
+    localStorage.setItem(getCreatorSettingsKey(cleanEmail), JSON.stringify(normalized));
+    if (normalized.upiId) {
+      localStorage.setItem(`zikro_saved_upi_${cleanEmail}`, normalized.upiId);
+    }
+    localStorage.setItem(`zikro_saved_name_${cleanEmail}`, normalized.upiPayeeName);
+    localStorage.setItem(`zikro_saved_editor_phone_${cleanEmail}`, normalized.editorPhone);
+  } catch (e) {
+    console.warn('Failed saving creator settings to localStorage:', e);
+  }
+}
 
 /**
  * Computes salted SHA-256 hash string for passwords using Web Crypto API.
