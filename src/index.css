@@ -95,11 +95,15 @@
 
 /* Crisp Print / PDF Export Styling for Freelance Invoices */
 @media print {
-  body {
+  body,
+  #root,
+  #root > div {
     background: #ffffff !important;
-    color: #171717 !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
     margin: 0 !important;
     padding: 0 !important;
+    min-height: 0 !important;
   }
 
   header,

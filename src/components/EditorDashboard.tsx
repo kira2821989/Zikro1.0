@@ -24,7 +24,8 @@ import {
   Check,
   XCircle,
   Cloud,
-  Search
+  Search,
+  LogOut
 } from 'lucide-react';
 import { Project } from '../types';
 import { formatBytes } from '../utils/mediaDb';
@@ -44,6 +45,7 @@ interface EditorDashboardProps {
   onCopyClientLink: (projectId: string) => void;
   onApproveUpiPayment: (projectId: string) => Promise<void> | void;
   onRejectUpiPayment: (projectId: string) => Promise<void> | void;
+  onLogout?: () => void;
 }
 
 export const EditorDashboard: React.FC<EditorDashboardProps> = ({
@@ -59,7 +61,8 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
   onSwitchToClientMode,
   onCopyClientLink,
   onApproveUpiPayment,
-  onRejectUpiPayment
+  onRejectUpiPayment,
+  onLogout
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'utr' | 'pending' | 'revisions' | 'paid'>('all');
@@ -185,9 +188,22 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
               {projects.length}
             </span>
           </h2>
-          <p className="text-xs text-neutral-400">
-            Logged in as <strong className="text-neutral-200">{creatorEmail}</strong> • Synced to Supabase Cloud
-          </p>
+          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+            <p className="text-xs text-neutral-400">
+              Logged in as <strong className="text-neutral-200">{creatorEmail}</strong> • Synced to Supabase Cloud
+            </p>
+            {onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-950/70 border border-red-500/30 px-2 py-0.5 rounded-lg transition"
+                title="Logout from Creator Studio"
+              >
+                <LogOut className="w-3 h-3" />
+                <span>Logout</span>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -371,12 +387,16 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                       <span className="text-[10px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 px-1.5 py-0.2 rounded">
                         v{proj.version || 1}
                       </span>
-                      {proj.storageInfo?.storageType === 'supabase_storage' && (
+                      {proj.storageInfo?.storageType === 'indexeddb' || !proj.mediaUrl || proj.mediaUrl.startsWith('blob:') ? (
+                        <span className="text-[10px] text-amber-300 bg-amber-500/15 border border-amber-500/40 px-1.5 py-0.2 rounded font-mono flex items-center gap-1">
+                          <span>⚠️ Local Only (Re-upload &lt;50MB for Cloud)</span>
+                        </span>
+                      ) : proj.storageInfo?.storageType === 'supabase_storage' ? (
                         <span className="text-[10px] text-sky-400 font-mono flex items-center gap-0.5">
                           <Cloud className="w-3 h-3" />
                           <span>Cloud</span>
                         </span>
-                      )}
+                      ) : null}
                     </div>
 
                     {/* Status Pill */}

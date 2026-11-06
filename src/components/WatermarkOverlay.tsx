@@ -25,10 +25,14 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
   // Position state for bouncing badge mode
   const [pos, setPos] = useState({ x: 20, y: 30, vx: 0.22, vy: 0.18 });
 
-  // Effective opacity: default to subtle ~0.28 if settings opacity was too high
+  // Effective opacity: respect customOpacity or settings.opacity up to 0.50
   const effectiveOpacity = customOpacity !== undefined 
     ? customOpacity 
-    : Math.min(settings.opacity, 0.40);
+    : Math.min(settings.opacity, 0.50);
+
+  const isBouncingMode = (settings.style === 'bouncing-box' || settings.speed === 'bouncing') && settings.style !== 'screen-tile';
+  const speedMultiplier = settings.speed === 'slow' ? 0.5 : settings.speed === 'fast' ? 2.2 : 1.0;
+  const diagonalAnimationDuration = settings.speed === 'slow' ? '28s' : settings.speed === 'fast' ? '7s' : '16s';
 
   useEffect(() => {
     if (isUnlocked) {
@@ -38,15 +42,17 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
     }
   }, [isUnlocked]);
 
-  // Gentle DVD bouncing physics
+  // Gentle DVD bouncing physics with dynamic speed scaling
   useEffect(() => {
-    if (isUnlocked || settings.speed !== 'bouncing') return;
+    if (isUnlocked || !isBouncingMode) return;
 
     let animId: number;
     const animate = () => {
       setPos(prev => {
-        let newX = prev.x + prev.vx;
-        let newY = prev.y + prev.vy;
+        const stepX = prev.vx * speedMultiplier;
+        const stepY = prev.vy * speedMultiplier;
+        let newX = prev.x + stepX;
+        let newY = prev.y + stepY;
         let newVx = prev.vx;
         let newVy = prev.vy;
 
@@ -75,7 +81,7 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
 
     animId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animId);
-  }, [isUnlocked, settings.speed]);
+  }, [isUnlocked, isBouncingMode, speedMultiplier]);
 
   const formatSec = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -180,10 +186,10 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
       )}
 
       {/* Mode B: Compact Bouncing Pill (Smooth, non-blocking DVD drift) */}
-      {settings.speed === 'bouncing' && settings.style !== 'screen-tile' && (
+      {isBouncingMode && (
         <div 
           data-watermark-protected="true"
-          className="absolute transition-transform duration-100 ease-linear pointer-events-none"
+          className="absolute transition-transform duration-75 ease-linear pointer-events-none"
           style={{
             left: `${pos.x}%`,
             top: `${pos.y}%`,
@@ -212,7 +218,7 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
       )}
 
       {/* Mode C: Hollow Stencil / Semi-transparent Diagonal Stamp (Default - Client Can Clearly Watch Video!) */}
-      {settings.speed !== 'bouncing' && settings.style !== 'screen-tile' && (
+      {!isBouncingMode && settings.style !== 'screen-tile' && (
         <div 
           data-watermark-protected="true"
           className="absolute inset-0 flex items-center justify-center pointer-events-none"
@@ -222,6 +228,7 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
           <div 
             data-watermark-protected="true"
             className="animate-watermark-float transform text-center select-none p-2 pointer-events-none"
+            style={{ animationDuration: diagonalAnimationDuration }}
           >
             <div 
               data-watermark-protected="true"

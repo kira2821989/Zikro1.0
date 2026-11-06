@@ -20,11 +20,15 @@ import { playClickPop, playPaymentSuccessChime } from '../utils/audio';
 interface CreatorAuthScreenProps {
   onLogin: (email: string, token?: string) => void;
   initialEmail?: string;
+  clientProjectTitle?: string;
+  onBackToClientReview?: () => void;
 }
 
 export const CreatorAuthScreen: React.FC<CreatorAuthScreenProps> = ({
   onLogin,
-  initialEmail = ''
+  initialEmail = '',
+  clientProjectTitle,
+  onBackToClientReview
 }) => {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState(initialEmail);
@@ -141,6 +145,19 @@ export const CreatorAuthScreen: React.FC<CreatorAuthScreenProps> = ({
         {/* Auth Card */}
         <div className="bg-neutral-900/90 border border-neutral-800 rounded-3xl p-6 sm:p-7 shadow-2xl backdrop-blur-xl relative overflow-hidden">
           
+          {/* Prominent Back to Client Video Review Button */}
+          {onBackToClientReview && (
+            <button
+              type="button"
+              onClick={onBackToClientReview}
+              className="w-full mb-5 py-2.5 px-3.5 rounded-2xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 hover:text-amber-200 text-xs font-bold flex items-center justify-center gap-1.5 transition shadow-sm active:scale-98"
+            >
+              <span className="truncate">
+                ← Back to Client Video Review ({clientProjectTitle || 'Video'})
+              </span>
+            </button>
+          )}
+
           {/* Mode Switcher Tabs (Login vs Create Account) */}
           <div className="grid grid-cols-2 gap-1.5 bg-neutral-950 p-1.5 rounded-2xl border border-neutral-800 mb-6">
             <button

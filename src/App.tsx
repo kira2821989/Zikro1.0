@@ -76,8 +76,10 @@ const getCreatorStorageKey = (email: string | null) => {
 
 export default function App() {
   // Check if client accessed via shared review link (e.g. ?project=id&mode=client)
-  const isDirectClientLink = typeof window !== 'undefined' && 
-    (new URLSearchParams(window.location.search).get('mode') === 'client');
+  const [isDirectClientLink, setIsDirectClientLink] = useState<boolean>(() => {
+    return typeof window !== 'undefined' && 
+      (new URLSearchParams(window.location.search).get('mode') === 'client');
+  });
 
   const urlProjectId = typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search).get('project')
@@ -597,6 +599,10 @@ export default function App() {
       setProjects([]);
       setActiveProjectId('');
     }
+    if (typeof window !== 'undefined') {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    setIsDirectClientLink(false);
     setViewMode('editor');
   };
 
@@ -604,22 +610,56 @@ export default function App() {
     setCreatorEmail(null);
     setProjects([]);
     setActiveProjectId('');
-    localStorage.removeItem(CREATOR_EMAIL_KEY);
-    localStorage.removeItem(CREATOR_TOKEN_KEY);
+    setIsProjectFormOpen(false);
+    setEditingProject(null);
+    setIsWhatsAppOpen(false);
+    setIsInvoiceOpen(false);
+    setIsPaymentOpen(false);
+    setIsCreatorPreviewingClient(false);
+    setActiveCommentId(null);
+    setUnlockedPinProjects(new Set());
+    try {
+      localStorage.removeItem(CREATOR_EMAIL_KEY);
+      localStorage.removeItem(CREATOR_TOKEN_KEY);
+      sessionStorage.removeItem('zikro_unlocked_pins');
+    } catch {
+      // ignore
+    }
     playClickPop();
   };
 
   const isUnlocked = activeProject?.status === 'paid_unlocked';
   const isPaidUnlocked = isUnlocked;
   const isUtrSubmitted = activeProject?.status === 'utr_submitted';
-  const isPinLocked = isClientModeOnly && Boolean(activeProject?.securitySettings?.isProtected && !unlockedPinProjects.has(activeProject.id));
+  const isPinLocked = (isClientModeOnly || isCreatorPreviewingClient) && Boolean(activeProject?.securitySettings?.isProtected && !unlockedPinProjects.has(activeProject.id));
   const clientReviewUrl = typeof window !== 'undefined' && activeProject
     ? `${window.location.origin}${window.location.pathname}?project=${activeProject.id}&mode=client` 
     : '';
 
   // ================= 4. AUTH GATE FOR CREATORS (Clients skip auth!) =================
-  if (viewMode === 'editor' && !creatorEmail && !isDirectClientLink) {
-    return <CreatorAuthScreen onLogin={handleLogin} />;
+  if (viewMode === 'editor' && !creatorEmail) {
+    return (
+      <CreatorAuthScreen
+        onLogin={handleLogin}
+        clientProjectTitle={activeProject?.title}
+        onBackToClientReview={
+          activeProject
+            ? () => {
+                setIsDirectClientLink(true);
+                setViewMode('client');
+                if (typeof window !== 'undefined') {
+                  window.history.replaceState(
+                    {},
+                    '',
+                    `${window.location.pathname}?project=${activeProject.id}&mode=client`
+                  );
+                }
+                playClickPop();
+              }
+            : undefined
+        }
+      />
+    );
   }
 
   return (
@@ -635,7 +675,31 @@ export default function App() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Creator PIN Lock Simulator Toggle */}
+            {activeProject.securitySettings?.isProtected && (
+              <button
+                onClick={() => {
+                  setUnlockedPinProjects(prev => {
+                    const next = new Set(prev);
+                    if (next.has(activeProject.id)) {
+                      next.delete(activeProject.id);
+                    } else {
+                      next.add(activeProject.id);
+                    }
+                    return next;
+                  });
+                  playClickPop();
+                }}
+                className="bg-neutral-950/20 hover:bg-neutral-950/30 text-neutral-950 font-mono text-[11px] px-2.5 py-1 rounded-lg transition font-bold"
+                title="Toggle PIN lock screen for testing"
+              >
+                {unlockedPinProjects.has(activeProject.id) 
+                  ? `Re-Lock PIN (${activeProject.securitySettings.passcode})` 
+                  : `Unlock PIN (${activeProject.securitySettings.passcode})`}
+              </button>
+            )}
+
             {/* Creator Demo Simulator */}
             <button
               onClick={() => {
@@ -721,18 +785,19 @@ export default function App() {
             </div>
 
             {/* Creator Studio Right Actions */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               
-              {/* Creator Account Pill with Logout */}
-              <div className="hidden lg:flex items-center gap-1.5 text-xs text-neutral-300 bg-neutral-900 border border-neutral-800 rounded-xl px-2.5 py-1.5">
-                <User className="w-3.5 h-3.5 text-amber-400" />
-                <span className="truncate max-w-[130px] font-mono text-[11px]">{creatorEmail}</span>
+              {/* Creator Account Pill with Logout (Always visible on mobile & desktop) */}
+              <div className="flex items-center gap-1.5 text-xs text-neutral-300 bg-neutral-900 border border-neutral-800 rounded-xl px-2 sm:px-2.5 py-1.5">
+                <User className="w-3.5 h-3.5 text-amber-400 hidden lg:block" />
+                <span className="hidden lg:inline truncate max-w-[130px] font-mono text-[11px]">{creatorEmail}</span>
                 <button
                   onClick={handleLogout}
                   title="Logout from Creator Studio"
-                  className="text-neutral-500 hover:text-red-400 ml-1 p-0.5 rounded transition"
+                  className="text-neutral-400 hover:text-red-400 p-0.5 rounded transition flex items-center gap-1"
                 >
                   <LogOut className="w-3.5 h-3.5" />
+                  <span className="lg:hidden text-[11px] font-semibold">Logout</span>
                 </button>
               </div>
 
@@ -745,10 +810,11 @@ export default function App() {
                     playClickPop();
                   }}
                   title="See exactly what client sees on their screen"
-                  className="inline-flex items-center gap-1.5 text-xs bg-neutral-900 hover:bg-neutral-800 border border-amber-500/40 text-amber-300 font-semibold px-3 py-1.5 rounded-xl transition shadow-sm"
+                  className="inline-flex items-center gap-1.5 text-xs bg-neutral-900 hover:bg-neutral-800 border border-amber-500/40 text-amber-300 font-semibold px-2.5 sm:px-3 py-1.5 rounded-xl transition shadow-sm"
                 >
                   <Eye className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Preview Client View</span>
+                  <span className="sm:hidden">Preview</span>
+                  <span className="hidden sm:inline">Preview Client View</span>
                 </button>
               )}
 
@@ -757,7 +823,7 @@ export default function App() {
                 <button
                   onClick={() => handleCopyClientLink()}
                   title="Copy secret review link to send client"
-                  className="inline-flex items-center gap-1.5 text-xs bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 px-3 py-1.5 rounded-xl transition"
+                  className="inline-flex items-center gap-1.5 text-xs bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 px-2.5 sm:px-3 py-1.5 rounded-xl transition"
                 >
                   {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-amber-400" />}
                   <span className="hidden sm:inline">{copiedLink ? 'Copied Link!' : 'Copy Link'}</span>
@@ -769,7 +835,7 @@ export default function App() {
                 <button
                   onClick={() => setIsWhatsAppOpen(true)}
                   title="Share via WhatsApp"
-                  className="inline-flex items-center gap-1.5 text-xs bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl transition font-medium"
+                  className="inline-flex items-center gap-1.5 text-xs bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 px-2.5 sm:px-3 py-1.5 rounded-xl transition font-medium"
                 >
                   <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
                   <span className="hidden sm:inline">WhatsApp</span>
@@ -781,7 +847,7 @@ export default function App() {
                 <button
                   onClick={() => setIsInvoiceOpen(true)}
                   title="Generate GST-Exempt Freelance Invoice"
-                  className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition hidden sm:block"
+                  className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition"
                 >
                   <FileText className="w-4 h-4" />
                 </button>
@@ -1003,6 +1069,7 @@ export default function App() {
             onCopyClientLink={(id) => handleCopyClientLink(id)}
             onApproveUpiPayment={handleApproveUpiPayment}
             onRejectUpiPayment={handleRejectUpiPayment}
+            onLogout={handleLogout}
           />
         ) : !activeProject ? (
           /* Client View: No Project Found */
@@ -1022,7 +1089,7 @@ export default function App() {
               mediaUrl: ''
             }}
             onUnlockSuccess={() => handleUnlockPasscode(activeProject.id)}
-            isEditorViewing={false}
+            isEditorViewing={isCreatorPreviewingClient}
           />
         ) : (
           /* ================= CLIENT REVIEW VIEW ================= */
@@ -1107,7 +1174,7 @@ export default function App() {
                     comments={activeProject.comments}
                     onOpenPaymentModal={() => setIsPaymentOpen(true)}
                     onRequestCommentAtVisual={() => {
-                      const input = document.querySelector('input[placeholder*="comment"], input[placeholder*="subtitle"]') as HTMLInputElement;
+                      const input = document.querySelector('input[placeholder*="feedback"], input[placeholder*="comment"], input[placeholder*="subtitle"]') as HTMLInputElement;
                       input?.focus();
                       input?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                     }}
@@ -1134,6 +1201,7 @@ export default function App() {
                   comments={activeProject.comments}
                   currentTime={playerCurrentTime}
                   activeCommentId={activeCommentId}
+                  mediaType={activeProject.type}
                   requestedSnapTime={requestedCommentTime}
                   requestedSnapTrigger={requestedCommentTrigger}
                   onSeekTo={(sec) => {
@@ -1164,8 +1232,8 @@ export default function App() {
                 {/* Creator Switch Link */}
                 <button
                   onClick={() => {
-                    setViewMode('editor');
                     setIsCreatorPreviewingClient(false);
+                    setViewMode('editor');
                     playClickPop();
                   }}
                   className="text-neutral-400 hover:text-amber-400 transition flex items-center gap-1 font-medium"

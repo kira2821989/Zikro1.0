@@ -31,6 +31,7 @@ interface TimestampCommentsProps {
   onDeleteComment?: (commentId: string) => void;
   onResolveAll?: () => void;
   isEditorView?: boolean;
+  mediaType?: 'video' | 'thumbnail';
   requestedSnapTime?: number | null;
   requestedSnapTrigger?: number;
 }
@@ -46,6 +47,7 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
   onDeleteComment,
   onResolveAll,
   isEditorView = false,
+  mediaType = 'video',
   requestedSnapTime,
   requestedSnapTrigger
 }) => {
@@ -100,12 +102,13 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
     e.preventDefault();
     if (!commentText.trim()) return;
 
+    const isThumbnail = mediaType === 'thumbnail';
     onAddComment({
       projectId: '',
       author: isEditorView ? 'editor' : 'client',
       authorName: authorName.trim() || (isEditorView ? 'Editor' : 'Client'),
-      timestampSeconds: targetTime,
-      formattedTime: formatTime(targetTime),
+      timestampSeconds: isThumbnail ? 0 : targetTime,
+      formattedTime: isThumbnail ? 'Visual' : formatTime(targetTime),
       text: commentText.trim(),
       category: category
     });
@@ -229,18 +232,25 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
       {/* Add New Timestamp Comment Form */}
       <form onSubmit={handleSubmitComment} className="p-3.5 bg-neutral-950/60 border-b border-neutral-800/80">
         <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-          {/* Timestamp picker pill */}
+          {/* Timestamp picker pill (Video only) or Visual badge (Thumbnail) */}
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleUseCurrentTime}
-              title="Click to snap comment to current video timecode"
-              className="inline-flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-300 px-2.5 py-1 rounded-md text-xs font-mono font-semibold transition"
-            >
-              <Clock className="w-3.5 h-3.5 text-amber-400" />
-              <span>Timestamp: {formatTime(targetTime)}</span>
-              <span className="text-[10px] text-amber-400/80 font-sans ml-1 underline">Snap to current</span>
-            </button>
+            {mediaType === 'thumbnail' ? (
+              <span className="inline-flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2.5 py-1 rounded-md text-xs font-mono font-semibold">
+                <Tag className="w-3.5 h-3.5 text-amber-400" />
+                <span>Visual Graphic Feedback</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={handleUseCurrentTime}
+                title="Click to snap comment to current video timecode"
+                className="inline-flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-300 px-2.5 py-1 rounded-md text-xs font-mono font-semibold transition"
+              >
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                <span>Timestamp: {formatTime(targetTime)}</span>
+                <span className="text-[10px] text-amber-400/80 font-sans ml-1 underline">Snap to current</span>
+              </button>
+            )}
           </div>
 
           {/* Name input */}
@@ -283,7 +293,11 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
             type="text"
             value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
-            placeholder={`e.g. "Bhai ${formatTime(targetTime)} par subtitle font change karo..."`}
+            placeholder={
+              mediaType === 'thumbnail'
+                ? 'Leave visual design feedback on this thumbnail...'
+                : `e.g. "Bhai ${formatTime(targetTime)} par subtitle font change karo..."`
+            }
             className="flex-1 bg-neutral-900 border border-neutral-700/80 focus:border-amber-500 text-neutral-100 text-xs rounded-xl px-3.5 py-2.5 focus:outline-none placeholder:text-neutral-500"
           />
           <button
@@ -296,21 +310,29 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
           </button>
         </div>
 
-        {/* Quick suggestions for freelance video feedback */}
+        {/* Quick suggestions */}
         <div className="flex items-center gap-1.5 mt-2 overflow-x-auto pb-0.5 text-[11px] text-neutral-400">
           <span className="text-[10px] uppercase font-mono text-neutral-500 shrink-0">Quick:</span>
-          {[
-            'Beat drop pe SFX loud karo',
-            'Subtitle yellow bold karo',
-            'Cut thoda fast karo',
-            'Logo 2 sec pehle add karo'
-          ].map((quick, i) => (
+          {(mediaType === 'thumbnail'
+            ? [
+                'Make title text bigger & bolder',
+                'Boost subject glow / contrast',
+                'Change background color tone',
+                'Move logo to top corner'
+              ]
+            : [
+                'Beat drop pe SFX loud karo',
+                'Subtitle yellow bold karo',
+                'Cut thoda fast karo',
+                'Logo 2 sec pehle add karo'
+              ]
+          ).map((quick, i) => (
             <button
               key={i}
               type="button"
               onClick={() => {
                 setCommentText(quick);
-                handleUseCurrentTime();
+                if (mediaType !== 'thumbnail') handleUseCurrentTime();
               }}
               className="shrink-0 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-amber-300 px-2 py-0.5 rounded border border-neutral-800 transition text-[10px]"
             >
@@ -326,7 +348,11 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
           <div className="text-center py-8 text-neutral-500 text-xs">
             <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-30 text-neutral-400" />
             <p>No feedback matching this filter.</p>
-            <p className="text-[11px] text-neutral-600 mt-1">Tap anywhere on the video timeline to add revision notes!</p>
+            <p className="text-[11px] text-neutral-600 mt-1">
+              {mediaType === 'thumbnail'
+                ? 'Leave visual design feedback on this thumbnail...'
+                : 'Tap anywhere on the video timeline to add revision notes!'}
+            </p>
           </div>
         ) : (
           filteredComments.map((comment) => {

@@ -13,7 +13,8 @@ import {
   RefreshCw,
   Check,
   Loader2,
-  HardDrive
+  HardDrive,
+  AlertTriangle
 } from 'lucide-react';
 import { Project, MediaType, AspectRatio, WatermarkSpeed, WatermarkStyle } from '../types';
 import { uploadMediaToSupabase, saveProjectToSupabase, deleteMediaFromSupabase } from '../supabase';
@@ -41,17 +42,26 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
   initialProject,
   creatorEmail
 }) => {
+  const cleanCreatorEmail = creatorEmail.toLowerCase().trim();
+  const savedUpiKey = `zikro_saved_upi_${cleanCreatorEmail}`;
+  const savedNameKey = `zikro_saved_name_${cleanCreatorEmail}`;
+  const savedEditorPhoneKey = `zikro_saved_editor_phone_${cleanCreatorEmail}`;
+
   const [title, setTitle] = useState(initialProject?.title || '');
   const [type, setType] = useState<MediaType>(initialProject?.type || 'video');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(initialProject?.aspectRatio || '9:16');
   const [clientName, setClientName] = useState(initialProject?.clientName || '');
   const [clientPhone, setClientPhone] = useState(initialProject?.clientPhone || '');
   const [editorPhone, setEditorPhone] = useState(
-    initialProject?.editorPhone || localStorage.getItem('zikro_saved_editor_phone') || ''
+    initialProject?.editorPhone || (cleanCreatorEmail ? localStorage.getItem(savedEditorPhoneKey) : null) || ''
   );
   const [amountINR, setAmountINR] = useState<number>(initialProject?.amountINR || 1500);
-  const [upiId, setUpiId] = useState(initialProject?.upiId || localStorage.getItem('zikro_saved_upi') || 'editor@okhdfcbank');
-  const [upiPayeeName, setUpiPayeeName] = useState(initialProject?.upiPayeeName || localStorage.getItem('zikro_saved_name') || 'Vikram Singh');
+  const [upiId, setUpiId] = useState(
+    initialProject?.upiId || (cleanCreatorEmail ? localStorage.getItem(savedUpiKey) : null) || 'editor@okhdfcbank'
+  );
+  const [upiPayeeName, setUpiPayeeName] = useState(
+    initialProject?.upiPayeeName || (cleanCreatorEmail ? localStorage.getItem(savedNameKey) : null) || 'Vikram Singh'
+  );
   const [mediaUrl, setMediaUrl] = useState(initialProject?.mediaUrl || PRESET_VIDEOS[0].url);
   const [localFileName, setLocalFileName] = useState(initialProject?.storageInfo?.originalFileName || '');
   const [pendingFileBlob, setPendingFileBlob] = useState<File | null>(null);
@@ -61,6 +71,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
   const [isSavingMedia, setIsSavingMedia] = useState(false);
   const [uploadStatusText, setUploadStatusText] = useState('');
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Security & Passcode
   const [isProtected, setIsProtected] = useState(initialProject?.securitySettings?.isProtected ?? false);
@@ -80,6 +91,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
   // RESET/SYNC PROJECT FORM STATE (Functional Bug #1)
   useEffect(() => {
     if (!isOpen) return;
+    setUploadError(null);
 
     if (initialProject) {
       // Edit mode: populate all fields cleanly
@@ -88,10 +100,10 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
       setAspectRatio(initialProject.aspectRatio || '9:16');
       setClientName(initialProject.clientName || '');
       setClientPhone(initialProject.clientPhone || '');
-      setEditorPhone(initialProject.editorPhone || localStorage.getItem('zikro_saved_editor_phone') || '');
+      setEditorPhone(initialProject.editorPhone || (cleanCreatorEmail ? localStorage.getItem(savedEditorPhoneKey) : null) || '');
       setAmountINR(initialProject.amountINR || 1500);
-      setUpiId(initialProject.upiId || localStorage.getItem('zikro_saved_upi') || 'editor@okhdfcbank');
-      setUpiPayeeName(initialProject.upiPayeeName || localStorage.getItem('zikro_saved_name') || 'Vikram Singh');
+      setUpiId(initialProject.upiId || (cleanCreatorEmail ? localStorage.getItem(savedUpiKey) : null) || 'editor@okhdfcbank');
+      setUpiPayeeName(initialProject.upiPayeeName || (cleanCreatorEmail ? localStorage.getItem(savedNameKey) : null) || 'Vikram Singh');
       setMediaUrl(initialProject.mediaUrl || PRESET_VIDEOS[0].url);
       setLocalFileName(initialProject.storageInfo?.originalFileName || '');
       setPendingFileBlob(null);
@@ -116,10 +128,10 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
       setAspectRatio('9:16');
       setClientName('');
       setClientPhone('');
-      setEditorPhone(localStorage.getItem('zikro_saved_editor_phone') || '');
+      setEditorPhone((cleanCreatorEmail ? localStorage.getItem(savedEditorPhoneKey) : null) || '');
       setAmountINR(1500);
-      setUpiId(localStorage.getItem('zikro_saved_upi') || 'editor@okhdfcbank');
-      setUpiPayeeName(localStorage.getItem('zikro_saved_name') || 'Vikram Singh');
+      setUpiId((cleanCreatorEmail ? localStorage.getItem(savedUpiKey) : null) || 'editor@okhdfcbank');
+      setUpiPayeeName((cleanCreatorEmail ? localStorage.getItem(savedNameKey) : null) || 'Vikram Singh');
       setMediaUrl(PRESET_VIDEOS[0].url);
       setLocalFileName('');
       setPendingFileBlob(null);
@@ -135,13 +147,14 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
       setShowTimecode(true);
       setShowClientTag(true);
     }
-  }, [initialProject, isOpen]);
+  }, [initialProject, isOpen, cleanCreatorEmail, savedEditorPhoneKey, savedUpiKey, savedNameKey]);
 
   if (!isOpen) return null;
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setUploadError(null);
       // Auto-detect video vs thumbnail format from file type or extension
       if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name)) {
         setType('thumbnail');
@@ -163,6 +176,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
   };
 
   const handleSelectPreset = (preset: typeof PRESET_VIDEOS[0]) => {
+    setUploadError(null);
     setPendingFileBlob(null);
     setMediaUrl(preset.url);
     setAspectRatio(preset.aspect);
@@ -181,15 +195,18 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
     e.preventDefault();
     if (!title.trim() || !clientName.trim() || !mediaUrl.trim()) return;
 
+    setUploadError(null);
     setIsSavingMedia(true);
     setUploadProgress(10);
     setUploadStatusText('Preparing project data...');
 
-    // Save default editor credentials for future projects
-    localStorage.setItem('zikro_saved_upi', upiId);
-    localStorage.setItem('zikro_saved_name', upiPayeeName);
-    if (editorPhone.trim()) {
-      localStorage.setItem('zikro_saved_editor_phone', editorPhone.trim());
+    // Save default editor credentials scoped by creatorEmail for future projects
+    if (cleanCreatorEmail) {
+      localStorage.setItem(savedUpiKey, upiId);
+      localStorage.setItem(savedNameKey, upiPayeeName);
+      if (editorPhone.trim()) {
+        localStorage.setItem(savedEditorPhoneKey, editorPhone.trim());
+      }
     }
 
     const projectId = initialProject?.id || `proj-${Date.now().toString(36)}`;
@@ -203,35 +220,33 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
       });
     }
 
-    // 2. If file was selected, ALWAYS store in local IndexedDB first for instant, guaranteed playback
+    // 2. If file was selected, store in local IndexedDB AND upload to Supabase Cloud Storage
     if (pendingFileBlob) {
-      let localCachedUrl = '';
       try {
         setUploadStatusText(`Caching ${formatBytes(fileSizeBytes)} to device storage...`);
-        const stored = await storeMediaBlob(projectId, pendingFileBlob, localFileName || 'video.mp4');
-        localCachedUrl = stored.objectUrl;
-        finalMediaUrl = localCachedUrl;
-        storageType = 'indexeddb';
+        await storeMediaBlob(projectId, pendingFileBlob, localFileName || 'video.mp4');
       } catch (idbErr) {
         console.warn('IndexedDB initial caching notice:', idbErr);
       }
 
-      // 3. ALSO attempt upload to Supabase Cloud Storage bucket 'videos'
+      // 3. Upload to Supabase Cloud Storage bucket 'videos' — stop and warn if it fails!
       try {
         setUploadStatusText(`Uploading ${formatBytes(fileSizeBytes)} to Supabase Cloud Storage...`);
         const cloudUrl = await uploadMediaToSupabase(pendingFileBlob, projectId, (pct) => {
           setUploadProgress(pct);
         });
-        if (cloudUrl) {
-          finalMediaUrl = cloudUrl;
-          storageType = 'supabase_storage';
+        if (!cloudUrl) {
+          throw new Error('Empty cloud URL returned');
         }
+        finalMediaUrl = cloudUrl;
+        storageType = 'supabase_storage';
       } catch (cloudErr) {
-        console.warn('Cloud storage upload encountered an issue, keeping reliable local device cache:', cloudErr);
-        if (localCachedUrl) {
-          finalMediaUrl = localCachedUrl;
-          storageType = 'indexeddb';
-        }
+        console.error('Cloud storage upload failed:', cloudErr);
+        setUploadError(
+          "⚠️ Cloud upload failed (File may exceed Supabase's 50MB free limit). Please upload a compressed video under 50MB or paste a direct cloud URL so your client can stream it on their phone!"
+        );
+        setIsSavingMedia(false);
+        return;
       }
     } else if (initialProject?.storageInfo?.storageType) {
       storageType = initialProject.storageInfo.storageType;
@@ -341,6 +356,23 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
               </div>
             </div>
             <span className="text-xs font-mono font-bold text-amber-400">{uploadProgress}%</span>
+          </div>
+        )}
+
+        {/* Cloud Upload Error Banner */}
+        {uploadError && (
+          <div className="p-3.5 bg-red-950/90 border-b border-red-500/60 flex items-start gap-2.5 animate-in fade-in">
+            <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1 text-xs text-red-100 leading-relaxed font-medium">
+              {uploadError}
+            </div>
+            <button
+              type="button"
+              onClick={() => setUploadError(null)}
+              className="text-red-300 hover:text-white text-xs font-bold px-1.5"
+            >
+              ✕
+            </button>
           </div>
         )}
 
