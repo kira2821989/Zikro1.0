@@ -142,6 +142,14 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Auto-detect video vs thumbnail format from file type or extension
+      if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name)) {
+        setType('thumbnail');
+        setAspectRatio('16:9');
+      } else if (file.type.startsWith('video/') || /\.(mp4|mov|webm|mkv)$/i.test(file.name)) {
+        setType('video');
+      }
+
       setPendingFileBlob(file);
       setFileSizeBytes(file.size);
       const tempPreviewUrl = URL.createObjectURL(file);
@@ -399,7 +407,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
             <div className="flex items-center justify-between text-xs font-semibold text-neutral-300">
               <span className="flex items-center gap-1.5">
                 <Cloud className="w-3.5 h-3.5 text-amber-400" />
-                <span>Supabase Cloud Video Storage</span>
+                <span>Supabase Cloud Media Storage</span>
               </span>
               {fileSizeBytes > 0 && (
                 <span className="text-[10px] text-emerald-400 font-mono">
@@ -413,7 +421,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
               <label className="flex-1 cursor-pointer bg-neutral-900 hover:bg-neutral-800 border border-dashed border-neutral-700 hover:border-amber-500/60 p-3 rounded-xl flex items-center justify-center gap-2 text-xs text-neutral-300 transition">
                 <Upload className="w-4 h-4 text-amber-400" />
                 <span className="truncate">
-                  {localFileName ? `Selected: ${localFileName}` : 'Upload MP4/MOV from Phone or PC (Direct to Cloud)'}
+                  {localFileName ? `Selected: ${localFileName}` : 'Upload MP4/MOV or Image from Phone / PC'}
                 </span>
                 <input 
                   type="file" 
@@ -593,7 +601,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
           </div>
 
           {/* Watermark Customization Accordion */}
-          <div className="p-3 bg-neutral-950 rounded-2xl border border-neutral-800 space-y-2.5">
+          <div className="p-3 bg-neutral-950 rounded-2xl border border-neutral-800 space-y-3">
             <div className="text-xs font-semibold text-neutral-300 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
                 <Shield className="w-3.5 h-3.5 text-amber-400" />
@@ -602,7 +610,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
               <span className="text-[10px] text-emerald-400 font-mono">AUTO REMOVED ON PAYMENT</span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div>
                 <label className="text-[11px] text-neutral-400 block mb-1">Watermark Banner Text</label>
                 <input
@@ -615,7 +623,20 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
               </div>
 
               <div>
-                <label className="text-[11px] text-neutral-400 block mb-1">Movement Style</label>
+                <label className="text-[11px] text-neutral-400 block mb-1">Watermark Layout Style</label>
+                <select
+                  value={watermarkStyle}
+                  onChange={(e) => setWatermarkStyle(e.target.value as WatermarkStyle)}
+                  className="w-full bg-neutral-900 border border-neutral-700 text-neutral-200 text-xs rounded-xl px-3 py-1.5 focus:outline-none focus:border-amber-500"
+                >
+                  <option value="diagonal-floating">Diagonal Stamp (Floating)</option>
+                  <option value="screen-tile">Shutterstock Repeated Grid</option>
+                  <option value="bouncing-box">Bouncing Badge (Corner Drift)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] text-neutral-400 block mb-1">Movement Speed</label>
                 <select
                   value={watermarkSpeed}
                   onChange={(e) => setWatermarkSpeed(e.target.value as WatermarkSpeed)}
@@ -626,6 +647,22 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
                   <option value="slow">Gentle Drift</option>
                   <option value="fast">Fast Jitter</option>
                 </select>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+                  <span>Watermark Opacity</span>
+                  <span className="font-mono text-amber-400 font-bold">{Math.round(watermarkOpacity * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.15}
+                  max={0.50}
+                  step={0.05}
+                  value={watermarkOpacity}
+                  onChange={(e) => setWatermarkOpacity(parseFloat(e.target.value))}
+                  className="w-full h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500 mt-1.5"
+                />
               </div>
             </div>
 

@@ -346,18 +346,32 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2.5">
-                    {/* Resolve Checkbox */}
-                    <button
-                      onClick={() => onToggleResolve(comment.id)}
-                      title={comment.resolved ? 'Mark as Unresolved' : 'Mark as Resolved / Fixed'}
-                      className="mt-0.5 text-neutral-500 hover:text-emerald-400 transition shrink-0"
-                    >
-                      {comment.resolved ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                      ) : (
-                        <Circle className="w-4 h-4 text-neutral-600 hover:text-amber-400" />
-                      )}
-                    </button>
+                    {/* Resolve Checkbox (Interactive for Editor, Read-only status badge for Client) */}
+                    {isEditorView ? (
+                      <button
+                        type="button"
+                        onClick={() => onToggleResolve(comment.id)}
+                        title={comment.resolved ? 'Mark as Unresolved' : 'Mark as Resolved / Fixed'}
+                        className="mt-0.5 text-neutral-500 hover:text-emerald-400 transition shrink-0"
+                      >
+                        {comment.resolved ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        ) : (
+                          <Circle className="w-4 h-4 text-neutral-600 hover:text-amber-400" />
+                        )}
+                      </button>
+                    ) : (
+                      <span
+                        title={comment.resolved ? 'Resolved by Editor' : 'Pending Editor Revision'}
+                        className="mt-0.5 shrink-0 cursor-default"
+                      >
+                        {comment.resolved ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        ) : (
+                          <Circle className="w-4 h-4 text-amber-500/60" />
+                        )}
+                      </span>
+                    )}
 
                     <div>
                       {/* Jump-to-timestamp chip & category */}
@@ -401,14 +415,13 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
                       <Reply className="w-3.5 h-3.5" />
                     </button>
 
-                    {/* Delete comment button */}
-                    {onDeleteComment && (
+                    {/* Delete comment button: Editors can delete any comment; Clients can only delete their own unresolved comments */}
+                    {onDeleteComment && (isEditorView || (comment.author === 'client' && !comment.resolved)) && (
                       <button
+                        type="button"
                         onClick={() => {
-                          if (confirm('Delete this revision comment note?')) {
-                            onDeleteComment(comment.id);
-                            playClickPop();
-                          }
+                          onDeleteComment(comment.id);
+                          playClickPop();
                         }}
                         title="Delete note"
                         className="text-neutral-600 hover:text-red-400 text-xs p-1 rounded transition"

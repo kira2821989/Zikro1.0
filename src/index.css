@@ -92,3 +92,46 @@
 .animate-pulse-subtle {
   animation: pulseSubtle 2.5s ease-in-out infinite;
 }
+
+/* Crisp Print / PDF Export Styling for Freelance Invoices */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #171717 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  header,
+  main,
+  footer,
+  .print-hide {
+    display: none !important;
+  }
+
+  #zikro-printable-invoice-backdrop {
+    position: static !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    backdrop-filter: none !important;
+    display: block !important;
+  }
+
+  #zikro-printable-invoice-card {
+    max-width: 100% !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+  }
+
+  #zikro-printable-invoice-body {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+}
+

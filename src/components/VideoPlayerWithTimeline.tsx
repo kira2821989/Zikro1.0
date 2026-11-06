@@ -55,11 +55,13 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
   const [isTampered, setIsTampered] = useState(false);
   const isUnlocked = project.status === 'paid_unlocked';
 
-  // FIX 1: Reset error and reload video immediately whenever project or mediaUrl changes!
+  // FIX 1: Reset error, tamper state, and reload video immediately whenever project or mediaUrl changes!
   useEffect(() => {
     setVideoError(false);
+    setIsTampered(false);
     setCurrentTime(0);
     setIsPlaying(false);
+    setLiveOpacity(project.watermarkSettings?.opacity || 0.28);
     onCurrentTimeChange?.(0);
     if (videoRef.current) {
       videoRef.current.load();
@@ -305,6 +307,8 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
           onLoadedMetadata={handleLoadedMetadata}
           onCanPlay={() => setVideoError(false)}
           onLoadedData={() => setVideoError(false)}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
           onTimeUpdate={handleTimeUpdate}
           onEnded={() => setIsPlaying(false)}
           onError={handleVideoError}

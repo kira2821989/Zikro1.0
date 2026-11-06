@@ -53,7 +53,7 @@ import {
   deleteMediaFromSupabase,
   verifyCreatorSession 
 } from './supabase';
-import { getMediaBlobUrl } from './utils/mediaDb';
+import { getMediaBlobUrl, deleteMediaBlob } from './utils/mediaDb';
 import { playClickPop, playPaymentSuccessChime, playAlertChime } from './utils/audio';
 
 const CREATOR_EMAIL_KEY = 'zikro_creator_email';
@@ -327,6 +327,14 @@ export default function App() {
     }));
   };
 
+  const computeStatusFromComments = (currentStatus: ProjectStatus, commentsList: ProjectComment[]): ProjectStatus => {
+    if (currentStatus === 'paid_unlocked' || currentStatus === 'utr_submitted') {
+      return currentStatus;
+    }
+    const hasUnresolved = commentsList.some(c => !c.resolved);
+    return hasUnresolved ? 'revision_requested' : 'in_review';
+  };
+
   const handleAddComment = async (commentData: Omit<ProjectComment, 'id' | 'createdAt' | 'resolved' | 'replies'>) => {
     if (!activeProject) return;
     isMutatingRef.current = true;
@@ -344,13 +352,14 @@ export default function App() {
     };
 
     const updatedComments = [...activeProject.comments, newComment];
+    const nextStatus = computeStatusFromComments(activeProject.status, updatedComments);
     handleUpdateActiveProject({
       comments: updatedComments,
-      status: activeProject.status === 'paid_unlocked' ? 'paid_unlocked' : 'revision_requested'
+      status: nextStatus
     });
 
     try {
-      await updateProjectCommentsInSupabase(activeProject.id, updatedComments);
+      await updateProjectCommentsInSupabase(activeProject.id, updatedComments, nextStatus);
     } finally {
       setTimeout(() => { isMutatingRef.current = false; }, 1000);
     }
@@ -365,9 +374,13 @@ export default function App() {
       }
       return c;
     });
-    handleUpdateActiveProject({ comments: updated });
+    const nextStatus = computeStatusFromComments(activeProject.status, updated);
+    handleUpdateActiveProject({
+      comments: updated,
+      status: nextStatus
+    });
     try {
-      await updateProjectCommentsInSupabase(activeProject.id, updated);
+      await updateProjectCommentsInSupabase(activeProject.id, updated, nextStatus);
     } finally {
       setTimeout(() => { isMutatingRef.current = false; }, 1000);
     }
@@ -391,9 +404,13 @@ export default function App() {
       }
       return c;
     });
-    handleUpdateActiveProject({ comments: updated });
+    const nextStatus = computeStatusFromComments(activeProject.status, updated);
+    handleUpdateActiveProject({
+      comments: updated,
+      status: nextStatus
+    });
     try {
-      await updateProjectCommentsInSupabase(activeProject.id, updated);
+      await updateProjectCommentsInSupabase(activeProject.id, updated, nextStatus);
     } finally {
       setTimeout(() => { isMutatingRef.current = false; }, 1000);
     }
@@ -403,9 +420,13 @@ export default function App() {
     if (!activeProject) return;
     isMutatingRef.current = true;
     const updated = activeProject.comments.filter(c => c.id !== commentId);
-    handleUpdateActiveProject({ comments: updated });
+    const nextStatus = computeStatusFromComments(activeProject.status, updated);
+    handleUpdateActiveProject({
+      comments: updated,
+      status: nextStatus
+    });
     try {
-      await updateProjectCommentsInSupabase(activeProject.id, updated);
+      await updateProjectCommentsInSupabase(activeProject.id, updated, nextStatus);
       playClickPop();
     } finally {
       setTimeout(() => { isMutatingRef.current = false; }, 1000);
@@ -416,9 +437,13 @@ export default function App() {
     if (!activeProject) return;
     isMutatingRef.current = true;
     const updated = activeProject.comments.map(c => ({ ...c, resolved: true }));
-    handleUpdateActiveProject({ comments: updated });
+    const nextStatus = computeStatusFromComments(activeProject.status, updated);
+    handleUpdateActiveProject({
+      comments: updated,
+      status: nextStatus
+    });
     try {
-      await updateProjectCommentsInSupabase(activeProject.id, updated);
+      await updateProjectCommentsInSupabase(activeProject.id, updated, nextStatus);
       playPaymentSuccessChime();
     } finally {
       setTimeout(() => { isMutatingRef.current = false; }, 1000);
@@ -521,6 +546,7 @@ export default function App() {
     if (target?.mediaUrl) {
       deleteMediaFromSupabase(target.mediaUrl).catch(() => {});
     }
+    deleteMediaBlob(id).catch(() => {});
     setProjects(prev => {
       const filtered = prev.filter(p => p.id !== id);
       if (activeProjectId === id) {
@@ -586,6 +612,7 @@ export default function App() {
   const isUnlocked = activeProject?.status === 'paid_unlocked';
   const isPaidUnlocked = isUnlocked;
   const isUtrSubmitted = activeProject?.status === 'utr_submitted';
+  const isPinLocked = isClientModeOnly && Boolean(activeProject?.securitySettings?.isProtected && !unlockedPinProjects.has(activeProject.id));
   const clientReviewUrl = typeof window !== 'undefined' && activeProject
     ? `${window.location.origin}${window.location.pathname}?project=${activeProject.id}&mode=client` 
     : '';
@@ -796,7 +823,7 @@ export default function App() {
                     <span>CLIENT REVIEW PORTAL</span>
                   </span>
                 </div>
-                {activeProject && (
+                {activeProject && !isPinLocked && (
                   <div className="text-[10px] text-neutral-400 truncate max-w-[200px] sm:max-w-xs">
                     Reviewing for: <strong className="text-neutral-200">{activeProject.clientName}</strong>
                   </div>
@@ -804,8 +831,8 @@ export default function App() {
               </div>
             </div>
 
-            {/* Client Top Action: Direct UPI Unlock CTA */}
-            {activeProject && (
+            {/* Client Top Action: Direct UPI Unlock CTA (Hidden when PIN is locked) */}
+            {activeProject && !isPinLocked && (
               <div className="flex items-center gap-2 sm:gap-3">
                 <button
                   type="button"
@@ -858,8 +885,8 @@ export default function App() {
         </header>
       )}
 
-      {/* 3. STATUS BAR (Explaining watermark / unlocked status) */}
-      {activeProject && (
+      {/* 3. STATUS BAR (Explaining watermark / unlocked status - Hidden when PIN is locked) */}
+      {activeProject && !isPinLocked && (
         <div className={`w-full py-2 px-4 text-xs font-medium border-b flex items-center justify-between flex-wrap gap-2 transition-colors ${
           isPaidUnlocked 
             ? 'bg-emerald-950/60 border-emerald-800 text-emerald-200' 
@@ -986,8 +1013,8 @@ export default function App() {
               This project could not be found or has not been uploaded yet. Please ask your freelance editor for an active Zikro link.
             </p>
           </div>
-        ) : (activeProject.securitySettings?.isProtected && !unlockedPinProjects.has(activeProject.id) && isClientModeOnly) ? (
-          /* Strictly isolated PIN lock screen: NO video/audio nodes rendered in DOM until correct PIN entered! (Security Flaw #9 & #7) */
+        ) : isPinLocked ? (
+          /* Strictly isolated PIN lock screen: NO video/audio/invoice/metadata nodes rendered in DOM until correct PIN entered! */
           <PasscodeLockModal
             project={{
               ...activeProject,
@@ -1152,7 +1179,7 @@ export default function App() {
       </main>
 
       {/* 5. MODALS */}
-      {activeProject && (
+      {activeProject && !isPinLocked && (
         <>
           <UpiPaymentModal
             project={activeProject}

@@ -23,10 +23,16 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
-      <div className="relative w-full max-w-lg bg-white text-neutral-900 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div
+      id="zikro-printable-invoice-backdrop"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in print:static print:bg-white print:p-0 print:block"
+    >
+      <div
+        id="zikro-printable-invoice-card"
+        className="relative w-full max-w-lg bg-white text-neutral-900 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] print:max-w-none print:max-h-none print:overflow-visible print:shadow-none print:rounded-none"
+      >
         {/* Actions bar (Screen only) */}
-        <div className="p-3.5 bg-neutral-100 border-b border-neutral-200 flex items-center justify-between print:hidden">
+        <div className="p-3.5 bg-neutral-100 border-b border-neutral-200 flex items-center justify-between print:hidden print-hide">
           <div className="flex items-center gap-2 text-xs font-semibold text-neutral-700">
             <FileText className="w-4 h-4 text-amber-600" />
             <span>Freelance Service Invoice</span>
@@ -49,7 +55,10 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
         </div>
 
         {/* Printable Invoice Document */}
-        <div className="p-6 sm:p-8 overflow-y-auto space-y-6 text-sm">
+        <div
+          id="zikro-printable-invoice-body"
+          className="p-6 sm:p-8 overflow-y-auto print:overflow-visible print:max-h-none space-y-6 text-sm"
+        >
           {/* Header */}
           <div className="flex justify-between items-start border-b border-neutral-200 pb-5">
             <div>

@@ -287,9 +287,13 @@ export async function saveProjectToSupabase(
 }
 
 /**
- * Fetch a single project by ID (used for client review and direct links)
+ * Fetch a single project by ID (used for client review and direct links).
+ * Strips creatorEmail when returning project data for unauthenticated client views.
  */
-export async function fetchProjectById(projectId: string): Promise<Project | null> {
+export async function fetchProjectById(
+  projectId: string,
+  includeCreatorEmail = false
+): Promise<Project | null> {
   try {
     const { data, error } = await supabase
       .from('projects')
@@ -303,11 +307,23 @@ export async function fetchProjectById(projectId: string): Promise<Project | nul
     }
 
     const projectData = (data.project_data || {}) as Project;
+    const rawCreatorEmail = data.creator_email || projectData.creatorEmail;
+
+    // Only expose creatorEmail if explicitly requested internally or if logged-in creator matches
+    const activeCreator = typeof window !== 'undefined' ? localStorage.getItem('zikro_creator_email') : null;
+    const activeToken = typeof window !== 'undefined' ? localStorage.getItem('zikro_creator_token') : null;
+    const isAuthenticatedOwner = Boolean(
+      activeCreator &&
+      activeToken &&
+      rawCreatorEmail &&
+      activeCreator.toLowerCase().trim() === rawCreatorEmail.toLowerCase().trim()
+    );
+
     return {
       ...projectData,
       id: data.id,
       status: (data.status as ProjectStatus) || projectData.status,
-      creatorEmail: data.creator_email || projectData.creatorEmail,
+      creatorEmail: (includeCreatorEmail || isAuthenticatedOwner) ? rawCreatorEmail : undefined,
       updatedAt: data.updated_at || projectData.updatedAt
     };
   } catch (err) {
@@ -360,8 +376,8 @@ export async function updateProjectStatusInSupabase(
   requestingCreatorEmail?: string | null
 ): Promise<boolean> {
   try {
-    // 1. Fetch current project_data to maintain integrity
-    const existing = await fetchProjectById(projectId);
+    // 1. Fetch current project_data (including creatorEmail) to maintain integrity
+    const existing = await fetchProjectById(projectId, true);
     if (!existing) return false;
 
     // PREVENT CONSOLE STATUS SPOOFING (Security Flaw #12):
@@ -416,18 +432,31 @@ export async function updateProjectStatusInSupabase(
 }
 
 /**
- * Update comments array on a project in Supabase
+ * Update comments array AND computed revision status on a project in Supabase
  */
 export async function updateProjectCommentsInSupabase(
   projectId: string,
-  comments: ProjectComment[]
+  comments: ProjectComment[],
+  newStatus?: ProjectStatus
 ): Promise<boolean> {
   try {
-    const existing = await fetchProjectById(projectId);
+    const existing = await fetchProjectById(projectId, true);
     if (!existing) return false;
+
+    // Determine effective status: preserve paid_unlocked / utr_submitted, otherwise reflect unresolved comments
+    let effectiveStatus: ProjectStatus = existing.status;
+    if (existing.status !== 'paid_unlocked' && existing.status !== 'utr_submitted') {
+      if (newStatus && newStatus !== 'paid_unlocked' && newStatus !== 'utr_submitted') {
+        effectiveStatus = newStatus;
+      } else {
+        const hasUnresolved = comments.some(c => !c.resolved);
+        effectiveStatus = hasUnresolved ? 'revision_requested' : 'in_review';
+      }
+    }
 
     const updatedProjectData: Project = {
       ...existing,
+      status: effectiveStatus,
       comments,
       updatedAt: new Date().toISOString()
     };
@@ -435,6 +464,7 @@ export async function updateProjectCommentsInSupabase(
     const { error } = await supabase
       .from('projects')
       .update({
+        status: effectiveStatus,
         project_data: updatedProjectData,
         updated_at: new Date().toISOString()
       })

@@ -23,15 +23,16 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
 
   const clientName = project.clientName.split(' ')[0] || 'Bhai';
   const amount = project.amountINR.toLocaleString('en-IN');
+  const versionTag = `v${project.version || 1}`;
   const pinNotice = project.securitySettings?.isProtected && project.securitySettings.passcode 
     ? `\n🔐 Review Passcode: *${project.securitySettings.passcode}*` 
     : '';
 
   const templates = {
-    draft: `Hey ${clientName}! 🎬 Aapki "${project.title}" ka draft preview ready hai!\n\nMaine Zikro pe upload kar diya hai. Video dekh kar kisi bhi second pe tap karke timeline feedback daal do:\n🔗 Review Link: ${reviewUrl}${pinNotice}\n\n(Watermark removed automatically once approved & UPI settled via the link!)`,
-    revision: `Bhai ${clientName}! ⚡ Aapne jo feedback diya tha, sab revisions update kar diye hain.\n\nEk baar new preview check kar lo:\n🔗 ${reviewUrl}${pinNotice}`,
-    payment_reminder: `Hey ${clientName}! 👋 Video finalize ho gayi hai. Total payment: ₹${amount}.\n\nReview link pe "Approve & Pay" tap karke UPI se pay kar do, turant bina watermark wali Original 4K export download ho jayegi:\n🔗 ${reviewUrl}${pinNotice}`,
-    unlocked: `Payment received! 🎉 Thank you ${clientName}. "${project.title}" ka original master file unlock ho chuka hai. Aap link se download kar sakte hain:\n🔗 ${reviewUrl}`
+    draft: `Hey ${clientName}! 🎬 Aapki "${project.title}" (${versionTag}) ka draft preview ready hai!\n\nMaine Zikro pe upload kar diya hai. Video dekh kar kisi bhi second pe tap karke timeline feedback daal do:\n🔗 Review Link: ${reviewUrl}${pinNotice}\n\n(Watermark removed automatically once approved & UPI settled via the link!)`,
+    revision: `Bhai ${clientName}! ⚡ Aapne jo feedback diya tha, sab revisions "${project.title}" (${versionTag}) me update kar diye hain.\n\nEk baar new preview check kar lo:\n🔗 ${reviewUrl}${pinNotice}`,
+    payment_reminder: `Hey ${clientName}! 👋 "${project.title}" (${versionTag}) finalize ho gayi hai. Total payment: ₹${amount}.\n\nReview link pe "Approve & Pay" tap karke UPI se pay kar do, turant bina watermark wali Original 4K export download ho jayegi:\n🔗 ${reviewUrl}${pinNotice}`,
+    unlocked: `Payment received! 🎉 Thank you ${clientName}. "${project.title}" (${versionTag}) ka original master file unlock ho chuka hai. Aap link se download kar sakte hain:\n🔗 ${reviewUrl}`
   };
 
   const currentMessage = templates[templateType];
