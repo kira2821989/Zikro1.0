@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Plus, 
   Film, 
@@ -23,7 +23,8 @@ import {
   AlertTriangle,
   Check,
   XCircle,
-  Cloud
+  Cloud,
+  Search
 } from 'lucide-react';
 import { Project } from '../types';
 import { formatBytes } from '../utils/mediaDb';
@@ -60,6 +61,9 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
   onApproveUpiPayment,
   onRejectUpiPayment
 }) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'utr' | 'pending' | 'revisions' | 'paid'>('all');
+
   // Calculations
   const pendingAmount = projects
     .filter(p => p.status !== 'paid_unlocked')
@@ -74,6 +78,26 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
   }, 0);
 
   const pendingUtrProjects = projects.filter(p => p.status === 'utr_submitted');
+
+  const utrCount = pendingUtrProjects.length;
+  const pendingPaymentCount = projects.filter(p => p.status !== 'paid_unlocked' && p.status !== 'utr_submitted').length;
+  const revisionsCount = projects.filter(p => p.comments.some(c => !c.resolved) || p.status === 'revision_requested').length;
+  const paidCount = projects.filter(p => p.status === 'paid_unlocked').length;
+
+  const filteredProjects = projects.filter(proj => {
+    const q = searchQuery.toLowerCase().trim();
+    if (q) {
+      const matchTitle = proj.title.toLowerCase().includes(q);
+      const matchClient = proj.clientName.toLowerCase().includes(q);
+      if (!matchTitle && !matchClient) return false;
+    }
+
+    if (statusFilter === 'utr') return proj.status === 'utr_submitted';
+    if (statusFilter === 'paid') return proj.status === 'paid_unlocked';
+    if (statusFilter === 'revisions') return proj.comments.some(c => !c.resolved) || proj.status === 'revision_requested';
+    if (statusFilter === 'pending') return proj.status !== 'paid_unlocked' && proj.status !== 'utr_submitted';
+    return true;
+  });
 
   return (
     <div className="w-full space-y-6">
@@ -177,6 +201,105 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
         </div>
       </div>
 
+      {/* Search & Status Filter Controls (Workflow Feature #6) */}
+      {projects.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+            {/* Search Input */}
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-4 h-4 text-neutral-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search projects by title or client name..."
+                className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-10 pr-8 py-2.5 text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-amber-500 transition"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Project counter pill */}
+            <div className="text-xs text-neutral-400 font-mono">
+              Showing {filteredProjects.length} of {projects.length} project{projects.length !== 1 ? 's' : ''}
+            </div>
+          </div>
+
+          {/* Quick Filter Pills */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+            <button
+              type="button"
+              onClick={() => setStatusFilter('all')}
+              className={`px-3 py-1.5 rounded-xl font-medium whitespace-nowrap transition border ${
+                statusFilter === 'all'
+                  ? 'bg-amber-500 text-neutral-950 border-amber-500 font-bold shadow-md shadow-amber-500/20'
+                  : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white hover:border-neutral-700'
+              }`}
+            >
+              All ({projects.length})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter('utr')}
+              className={`px-3 py-1.5 rounded-xl font-medium whitespace-nowrap transition border flex items-center gap-1.5 ${
+                statusFilter === 'utr'
+                  ? 'bg-amber-500 text-neutral-950 border-amber-500 font-bold shadow-md shadow-amber-500/20'
+                  : 'bg-neutral-900 text-amber-300 border-neutral-800 hover:border-amber-500/50'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5 fill-current" />
+              <span>UTR Submitted ({utrCount})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter('pending')}
+              className={`px-3 py-1.5 rounded-xl font-medium whitespace-nowrap transition border ${
+                statusFilter === 'pending'
+                  ? 'bg-amber-500 text-neutral-950 border-amber-500 font-bold shadow-md shadow-amber-500/20'
+                  : 'bg-neutral-900 text-neutral-300 border-neutral-800 hover:text-white hover:border-neutral-700'
+              }`}
+            >
+              Pending Payment ({pendingPaymentCount})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter('revisions')}
+              className={`px-3 py-1.5 rounded-xl font-medium whitespace-nowrap transition border flex items-center gap-1.5 ${
+                statusFilter === 'revisions'
+                  ? 'bg-amber-500 text-neutral-950 border-amber-500 font-bold shadow-md shadow-amber-500/20'
+                  : 'bg-neutral-900 text-sky-300 border-neutral-800 hover:border-sky-500/50'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>Revisions ({revisionsCount})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter('paid')}
+              className={`px-3 py-1.5 rounded-xl font-medium whitespace-nowrap transition border flex items-center gap-1.5 ${
+                statusFilter === 'paid'
+                  ? 'bg-emerald-600 text-white border-emerald-500 font-bold shadow-md shadow-emerald-600/20'
+                  : 'bg-neutral-900 text-emerald-300 border-neutral-800 hover:border-emerald-500/50'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Paid & Unlocked ({paidCount})</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Projects Grid / List */}
       {projects.length === 0 ? (
         <div className="text-center py-16 p-6 bg-neutral-900/40 rounded-3xl border border-neutral-800/80 border-dashed max-w-xl mx-auto my-6">
@@ -193,9 +316,27 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
             <span>+ New Client Project</span>
           </button>
         </div>
+      ) : filteredProjects.length === 0 ? (
+        <div className="text-center py-16 p-6 bg-neutral-900/40 rounded-3xl border border-neutral-800 max-w-md mx-auto my-6">
+          <Search className="w-10 h-10 text-neutral-600 mx-auto mb-3" />
+          <h3 className="text-sm font-bold text-white">No projects found</h3>
+          <p className="text-xs text-neutral-400 mt-1">
+            No projects matched your search "{searchQuery}" or selected status filter.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setSearchQuery('');
+              setStatusFilter('all');
+            }}
+            className="mt-4 text-xs font-semibold text-amber-400 hover:underline"
+          >
+            Clear Search & Filters
+          </button>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {projects.map((proj) => {
+          {filteredProjects.map((proj) => {
             const isSelected = activeProjectId === proj.id;
             const isPaid = proj.status === 'paid_unlocked';
             const isUtrSubmitted = proj.status === 'utr_submitted';
@@ -204,7 +345,10 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
             return (
               <div
                 key={proj.id}
-                onClick={() => onSelectProject(proj.id)}
+                onClick={() => {
+                  onSelectProject(proj.id);
+                  onSwitchToClientMode(proj.id);
+                }}
                 className={`group cursor-pointer rounded-2xl border transition-all duration-200 overflow-hidden flex flex-col justify-between ${
                   isUtrSubmitted
                     ? 'bg-neutral-900 border-amber-500 ring-2 ring-amber-500/40 shadow-xl shadow-amber-500/20 animate-pulse-subtle'
@@ -216,12 +360,16 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                 {/* Card Top: Status & Media badge */}
                 <div className="p-4 space-y-3">
                   <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-neutral-400">
                         {proj.type === 'video' ? <Film className="w-4 h-4 text-amber-400" /> : <ImageIcon className="w-4 h-4 text-purple-400" />}
                       </span>
                       <span className="text-[11px] font-mono uppercase text-neutral-400">
                         {proj.aspectRatio}
+                      </span>
+                      {/* Version badge (Workflow Feature #4) */}
+                      <span className="text-[10px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 px-1.5 py-0.2 rounded">
+                        v{proj.version || 1}
                       </span>
                       {proj.storageInfo?.storageType === 'supabase_storage' && (
                         <span className="text-[10px] text-sky-400 font-mono flex items-center gap-0.5">
@@ -243,7 +391,15 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                         <span>PAID & UNLOCKED</span>
                       </span>
                     ) : unresolvedComments > 0 ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/40 px-2 py-0.5 rounded-full">
+                      <span 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectProject(proj.id);
+                          onSwitchToClientMode(proj.id);
+                        }}
+                        className="inline-flex items-center gap-1 text-[10px] font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/40 px-2 py-0.5 rounded-full hover:bg-sky-500/30 transition cursor-pointer"
+                        title="Click to view client timestamp notes"
+                      >
                         <Clock className="w-3 h-3" />
                         <span>{unresolvedComments} Revisions</span>
                       </span>
@@ -287,6 +443,12 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                   {/* ================= UTR APPROVAL / REJECTION CARD ================= */}
                   {isUtrSubmitted && (
                     <div className="p-3 bg-amber-950/40 border border-amber-500/50 rounded-xl space-y-2 animate-in fade-in">
+                      {/* Bouncing Amber Alert */}
+                      <div className="flex items-center gap-1.5 text-xs text-amber-950 font-bold bg-amber-400 px-2.5 py-1.5 rounded-lg animate-bounce shadow-md">
+                        <Zap className="w-3.5 h-3.5 fill-current shrink-0" />
+                        <span>⚡ NEW UTR SUBMITTED! Verify bank credit.</span>
+                      </div>
+
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-amber-300 font-semibold flex items-center gap-1">
                           <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />

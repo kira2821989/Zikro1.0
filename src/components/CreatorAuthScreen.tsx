@@ -18,7 +18,7 @@ import { signUpCreator, loginCreator } from '../supabase';
 import { playClickPop, playPaymentSuccessChime } from '../utils/audio';
 
 interface CreatorAuthScreenProps {
-  onLogin: (email: string) => void;
+  onLogin: (email: string, token?: string) => void;
   initialEmail?: string;
 }
 
@@ -65,7 +65,7 @@ export const CreatorAuthScreen: React.FC<CreatorAuthScreenProps> = ({
         playPaymentSuccessChime();
         setSuccessMsg('Account created successfully! Logging you into Studio...');
         setTimeout(() => {
-          onLogin(cleanEmail);
+          onLogin(cleanEmail, result.token);
         }, 600);
       } else {
         const result = await loginCreator(cleanEmail, password);
@@ -76,7 +76,7 @@ export const CreatorAuthScreen: React.FC<CreatorAuthScreenProps> = ({
         }
 
         playPaymentSuccessChime();
-        onLogin(cleanEmail);
+        onLogin(cleanEmail, result.token);
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'An unexpected authentication error occurred.');
@@ -96,7 +96,7 @@ export const CreatorAuthScreen: React.FC<CreatorAuthScreenProps> = ({
     const loginResult = await loginCreator(demoEmail, demoPass);
     if (loginResult.success) {
       playPaymentSuccessChime();
-      onLogin(demoEmail);
+      onLogin(demoEmail, loginResult.token);
       return;
     }
 
@@ -105,7 +105,7 @@ export const CreatorAuthScreen: React.FC<CreatorAuthScreenProps> = ({
       const signupResult = await signUpCreator(demoEmail, demoPass);
       if (signupResult.success) {
         playPaymentSuccessChime();
-        onLogin(demoEmail);
+        onLogin(demoEmail, signupResult.token);
         return;
       }
     }

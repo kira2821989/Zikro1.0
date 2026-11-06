@@ -105,25 +105,39 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
   return (
     <div 
       ref={containerRef}
+      id="zikro-anti-theft-watermark"
+      data-tamper-shield="true"
       className="absolute inset-0 pointer-events-none select-none overflow-hidden z-20 flex flex-col justify-between"
       style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
     >
       {/* 1. Discrete Top Ribbon (Slim, Doesn't block video) */}
-      <div className="w-full bg-gradient-to-b from-black/60 to-transparent p-2 sm:p-2.5 flex items-center justify-between text-[10px] font-mono text-neutral-300">
-        <div className="flex items-center gap-1.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-          <span className="bg-black/50 border border-neutral-700/60 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider text-amber-300/90 font-medium">
+      <div 
+        data-watermark-protected="true"
+        className="w-full bg-gradient-to-b from-black/60 to-transparent p-2 sm:p-2.5 flex items-center justify-between text-[10px] font-mono text-neutral-300"
+      >
+        <div className="flex items-center gap-1.5 overflow-hidden">
+          <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+          <span 
+            data-watermark-protected="true"
+            className="bg-black/50 border border-neutral-700/60 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider text-amber-300/90 font-medium shrink-0"
+          >
             Draft Review
           </span>
           {settings.showClientTag && (
-            <span className="hidden sm:inline text-neutral-400 text-[10px]">
+            <span 
+              data-watermark-protected="true"
+              className="inline text-neutral-400 text-[10px] truncate max-w-[120px] sm:max-w-[200px]"
+            >
               For: {clientName}
             </span>
           )}
         </div>
 
         {settings.showTimecode && (
-          <div className="bg-black/50 px-2 py-0.5 rounded text-neutral-300 font-mono text-[10px] border border-neutral-800">
+          <div 
+            data-watermark-protected="true"
+            className="bg-black/50 px-2 py-0.5 rounded text-neutral-300 font-mono text-[10px] border border-neutral-800 shrink-0"
+          >
             TC {formatSec(currentTime)}
           </div>
         )}
@@ -134,15 +148,18 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
       {/* Mode A: Repetitive Delicate Security Pattern (Faint like Shutterstock/Getty) */}
       {settings.style === 'screen-tile' && (
         <div 
+          data-watermark-protected="true"
           className="absolute inset-0 grid grid-cols-2 sm:grid-cols-3 gap-6 p-4 place-items-center pointer-events-none"
           style={{ opacity: effectiveOpacity }}
         >
           {Array.from({ length: 6 }).map((_, i) => (
             <div 
               key={i} 
+              data-watermark-protected="true"
               className="transform -rotate-25 text-center select-none"
             >
               <div 
+                data-watermark-protected="true"
                 className="font-extrabold text-xs sm:text-sm tracking-widest uppercase text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
                 style={{
                   WebkitTextStroke: '0.5px rgba(255,255,255,0.7)',
@@ -151,7 +168,10 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
               >
                 {settings.text || 'DRAFT PREVIEW'}
               </div>
-              <div className="text-[9px] text-amber-300 font-mono tracking-wider drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+              <div 
+                data-watermark-protected="true"
+                className="text-[9px] text-amber-300 font-mono tracking-wider drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]"
+              >
                 PAY TO UNLOCK CLEAN 4K
               </div>
             </div>
@@ -162,6 +182,7 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
       {/* Mode B: Compact Bouncing Pill (Smooth, non-blocking DVD drift) */}
       {settings.speed === 'bouncing' && settings.style !== 'screen-tile' && (
         <div 
+          data-watermark-protected="true"
           className="absolute transition-transform duration-100 ease-linear pointer-events-none"
           style={{
             left: `${pos.x}%`,
@@ -169,12 +190,21 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
             opacity: Math.max(0.35, effectiveOpacity + 0.1)
           }}
         >
-          <div className="bg-black/50 border border-white/20 shadow-lg px-3 py-1.5 rounded-full backdrop-blur-[2px] flex items-center gap-1.5 whitespace-nowrap text-white">
+          <div 
+            data-watermark-protected="true"
+            className="bg-black/50 border border-white/20 shadow-lg px-3 py-1.5 rounded-full backdrop-blur-[2px] flex items-center gap-1.5 whitespace-nowrap text-white"
+          >
             <Lock className="w-3 h-3 text-amber-400 shrink-0" />
-            <span className="font-bold text-[11px] tracking-wide font-mono text-amber-200">
+            <span 
+              data-watermark-protected="true"
+              className="font-bold text-[11px] tracking-wide font-mono text-amber-200"
+            >
               {settings.text || 'DRAFT PREVIEW'}
             </span>
-            <span className="text-[9px] text-neutral-300 font-mono bg-white/10 px-1.5 py-0.2 rounded-full">
+            <span 
+              data-watermark-protected="true"
+              className="text-[9px] text-neutral-300 font-mono bg-white/10 px-1.5 py-0.2 rounded-full"
+            >
               UNPAID
             </span>
           </div>
@@ -184,12 +214,17 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
       {/* Mode C: Hollow Stencil / Semi-transparent Diagonal Stamp (Default - Client Can Clearly Watch Video!) */}
       {settings.speed !== 'bouncing' && settings.style !== 'screen-tile' && (
         <div 
+          data-watermark-protected="true"
           className="absolute inset-0 flex items-center justify-center pointer-events-none"
           style={{ opacity: effectiveOpacity }}
         >
           {/* Subtle Hollow Stencil Text with Zero Dark Box */}
-          <div className="animate-watermark-float transform text-center select-none p-2 pointer-events-none">
+          <div 
+            data-watermark-protected="true"
+            className="animate-watermark-float transform text-center select-none p-2 pointer-events-none"
+          >
             <div 
+              data-watermark-protected="true"
               className="text-white font-black text-xl sm:text-2xl md:text-3xl tracking-widest uppercase"
               style={{
                 textShadow: '0 2px 8px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,1)',
@@ -199,7 +234,10 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
               {settings.text || 'ZIKRO PREVIEW'}
             </div>
             
-            <div className="mt-1 flex items-center justify-center gap-1.5 text-[11px] font-mono text-amber-300 tracking-wider font-semibold drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">
+            <div 
+              data-watermark-protected="true"
+              className="mt-1 flex items-center justify-center gap-1.5 text-[11px] font-mono text-amber-300 tracking-wider font-semibold drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]"
+            >
               <span>UNPAID DRAFT</span>
               <span>•</span>
               <span>INSTANT UPI UNLOCK</span>
@@ -209,8 +247,14 @@ export const WatermarkOverlay: React.FC<WatermarkOverlayProps> = ({
       )}
 
       {/* 3. Subtle Non-Intrusive Bottom Strip */}
-      <div className="w-full bg-gradient-to-t from-black/60 to-transparent p-1.5 text-center">
-        <span className="text-[9px] font-mono text-neutral-400/80 tracking-widest">
+      <div 
+        data-watermark-protected="true"
+        className="w-full bg-gradient-to-t from-black/60 to-transparent p-1.5 text-center"
+      >
+        <span 
+          data-watermark-protected="true"
+          className="text-[9px] font-mono text-neutral-400/80 tracking-widest"
+        >
           ZIKRO SECURE PREVIEW • RELEASES AFTER UPI APPROVAL
         </span>
       </div>

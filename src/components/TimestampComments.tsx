@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   MessageSquare, 
   CheckCircle2, 
@@ -14,7 +14,8 @@ import {
   Type,
   Scissors,
   Palette,
-  Tag
+  Tag,
+  Trash2
 } from 'lucide-react';
 import { ProjectComment, CommentCategory } from '../types';
 import { playClickPop } from '../utils/audio';
@@ -27,7 +28,11 @@ interface TimestampCommentsProps {
   onAddComment: (comment: Omit<ProjectComment, 'id' | 'createdAt' | 'resolved' | 'replies'>) => void;
   onToggleResolve: (commentId: string) => void;
   onAddReply: (commentId: string, replyText: string, authorName: string) => void;
+  onDeleteComment?: (commentId: string) => void;
+  onResolveAll?: () => void;
   isEditorView?: boolean;
+  requestedSnapTime?: number | null;
+  requestedSnapTrigger?: number;
 }
 
 export const TimestampComments: React.FC<TimestampCommentsProps> = ({
@@ -38,7 +43,11 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
   onAddComment,
   onToggleResolve,
   onAddReply,
-  isEditorView = false
+  onDeleteComment,
+  onResolveAll,
+  isEditorView = false,
+  requestedSnapTime,
+  requestedSnapTrigger
 }) => {
   const [filter, setFilter] = useState<'all' | 'pending' | 'resolved'>('all');
   const [commentText, setCommentText] = useState('');
@@ -46,10 +55,33 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
   const [authorName, setAuthorName] = useState(isEditorView ? 'Editor' : 'Client');
   const [targetTime, setTargetTime] = useState<number>(currentTime);
   const [copied, setCopied] = useState(false);
+  const commentInputRef = useRef<HTMLInputElement>(null);
 
   // Active reply input
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
+
+  useEffect(() => {
+    setAuthorName(isEditorView ? 'Editor' : 'Client');
+  }, [isEditorView]);
+
+  // Keep targetTime synchronized to current video playback position when user hasn't typed a comment yet
+  useEffect(() => {
+    if (!commentText.trim()) {
+      setTargetTime(currentTime);
+    }
+  }, [currentTime, commentText]);
+
+  // When client clicks "Comment at X:XX", snap targetTime and auto-focus comment input
+  useEffect(() => {
+    if (requestedSnapTime !== undefined && requestedSnapTime !== null && requestedSnapTrigger) {
+      setTargetTime(requestedSnapTime);
+      setTimeout(() => {
+        commentInputRef.current?.focus();
+        commentInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 50);
+    }
+  }, [requestedSnapTrigger, requestedSnapTime]);
 
   // Keep targetTime synchronized if user hasn't edited text yet or on initial load
   const formatTime = (time: number) => {
@@ -84,7 +116,8 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
 
   const handleSendReply = (commentId: string) => {
     if (!replyText.trim()) return;
-    onAddReply(commentId, replyText.trim(), isEditorView ? 'Editor (Vikram)' : authorName);
+    const author = isEditorView ? (authorName.trim() || 'Editor') : (authorName.trim() || 'Client');
+    onAddReply(commentId, replyText.trim(), author);
     setReplyText('');
     setReplyingToId(null);
     playClickPop();
@@ -145,8 +178,22 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
           )}
         </div>
 
-        {/* WhatsApp Export & Filter Tabs */}
-        <div className="flex items-center gap-2">
+        {/* WhatsApp Export, Resolve All & Filter Tabs */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {isEditorView && pendingCount > 0 && onResolveAll && (
+            <button
+              onClick={() => {
+                onResolveAll();
+                playClickPop();
+              }}
+              title="Mark all pending revision notes as fixed"
+              className="inline-flex items-center gap-1 text-xs bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 px-2.5 py-1.5 rounded-lg border border-emerald-500/40 transition font-medium"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Resolve All</span>
+            </button>
+          )}
+
           <button
             onClick={handleCopyWhatsAppRevisions}
             title="Copy all pending revision points formatted for WhatsApp"
@@ -232,6 +279,7 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
         {/* Input box */}
         <div className="flex gap-2">
           <input
+            ref={commentInputRef}
             type="text"
             value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
@@ -340,17 +388,35 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
                     </div>
                   </div>
 
-                  {/* Reply trigger button */}
-                  <button
-                    onClick={() => {
-                      setReplyingToId(replyingToId === comment.id ? null : comment.id);
-                      setReplyText('');
-                    }}
-                    title="Reply to this feedback"
-                    className="text-neutral-500 hover:text-amber-400 text-xs p-1 rounded transition shrink-0"
-                  >
-                    <Reply className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Reply trigger button */}
+                    <button
+                      onClick={() => {
+                        setReplyingToId(replyingToId === comment.id ? null : comment.id);
+                        setReplyText('');
+                      }}
+                      title="Reply to this feedback"
+                      className="text-neutral-500 hover:text-amber-400 text-xs p-1 rounded transition"
+                    >
+                      <Reply className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* Delete comment button */}
+                    {onDeleteComment && (
+                      <button
+                        onClick={() => {
+                          if (confirm('Delete this revision comment note?')) {
+                            onDeleteComment(comment.id);
+                            playClickPop();
+                          }
+                        }}
+                        title="Delete note"
+                        className="text-neutral-600 hover:text-red-400 text-xs p-1 rounded transition"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Replies Thread */}

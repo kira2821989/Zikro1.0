@@ -44,10 +44,17 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
   };
 
   const handleOpenWhatsApp = () => {
-    const cleanPhone = project.clientPhone ? project.clientPhone.replace(/[^0-9]/g, '') : '';
+    let cleanPhone = project.clientPhone ? project.clientPhone.replace(/[^0-9]/g, '') : '';
+    if (cleanPhone.length === 10) {
+      cleanPhone = '91' + cleanPhone;
+    }
     const phoneParam = cleanPhone.length >= 10 ? `phone=${cleanPhone}&` : '';
     const url = `https://api.whatsapp.com/send?${phoneParam}text=${encodeURIComponent(currentMessage)}`;
-    window.open(url, '_blank');
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.click();
   };
 
   return (

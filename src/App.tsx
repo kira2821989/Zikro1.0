@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldAlert, 
   Lock, 
@@ -49,12 +49,15 @@ import {
   saveProjectToSupabase, 
   updateProjectStatusInSupabase, 
   updateProjectCommentsInSupabase,
-  deleteProjectFromSupabase 
+  deleteProjectFromSupabase,
+  deleteMediaFromSupabase,
+  verifyCreatorSession 
 } from './supabase';
 import { getMediaBlobUrl } from './utils/mediaDb';
-import { playClickPop, playPaymentSuccessChime } from './utils/audio';
+import { playClickPop, playPaymentSuccessChime, playAlertChime } from './utils/audio';
 
 const CREATOR_EMAIL_KEY = 'zikro_creator_email';
+const CREATOR_TOKEN_KEY = 'zikro_creator_token';
 
 // Clean up old demo localStorage keys to avoid cross-contamination
 if (typeof window !== 'undefined') {
@@ -121,10 +124,22 @@ export default function App() {
     return projects[0]?.id || '';
   });
 
+  // Timeline playback position & sync state (Bug #1)
+  const [playerCurrentTime, setPlayerCurrentTime] = useState<number>(0);
+  const [requestedCommentTime, setRequestedCommentTime] = useState<number | null>(null);
+  const [requestedCommentTrigger, setRequestedCommentTrigger] = useState<number>(0);
+
+  // Anti-flicker mutation flag to avoid overwriting optimistic UI updates during 4s polling (Bug #3)
+  const isMutatingRef = useRef(false);
+
   const [isLoadingCloud, setIsLoadingCloud] = useState(false);
   const [isCreatorPreviewingClient, setIsCreatorPreviewingClient] = useState(false);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  // Actor role: creator retains 'editor' status even when previewing client mode
+  const isClientModeOnly = viewMode === 'client' && !isCreatorPreviewingClient;
+  const isEditorActor = !isClientModeOnly;
 
   // Modals
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
@@ -186,13 +201,35 @@ export default function App() {
     }
   }, [creatorEmail, viewMode]);
 
+  // PREVENT localStorage SESSION SPOOFING (Security Loophole #5)
+  // Strict session token verification against Supabase public.creators table
+  useEffect(() => {
+    if (creatorEmail && viewMode === 'editor') {
+      const token = typeof window !== 'undefined' ? localStorage.getItem(CREATOR_TOKEN_KEY) : null;
+      if (!token) {
+        console.warn('⚠️ Missing creator token in session. Resetting to login.');
+        handleLogout();
+        return;
+      }
+
+      verifyCreatorSession(creatorEmail, token).then(isValid => {
+        if (!isValid) {
+          console.warn('⛔ Invalid or expired creator session. Forcing login screen.');
+          handleLogout();
+        }
+      });
+    }
+  }, [creatorEmail, viewMode]);
+
   // ================= 2. CLIENT AUTO-POLLING (Every 4 seconds for instant unlock) =================
   useEffect(() => {
-    if (viewMode !== 'client' || !activeProjectId) return;
+    // Pause polling while creator is previewing client so simulator toggle isn't overwritten
+    if (viewMode !== 'client' || !activeProjectId || isMutatingRef.current || isCreatorPreviewingClient) return;
 
     const interval = setInterval(async () => {
+      if (isMutatingRef.current) return;
       const latest = await fetchProjectById(activeProjectId);
-      if (latest) {
+      if (latest && !isMutatingRef.current) {
         setProjects(prev => {
           const idx = prev.findIndex(p => p.id === latest.id);
           if (idx >= 0) {
@@ -211,7 +248,31 @@ export default function App() {
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [viewMode, activeProjectId]);
+  }, [viewMode, activeProjectId, isCreatorPreviewingClient]);
+
+  // ================= 2B. CREATOR STUDIO LIVE POLLING (Every 4 seconds for live UTR & comments) =================
+  useEffect(() => {
+    if (viewMode !== 'editor' || !creatorEmail || isMutatingRef.current) return;
+
+    const interval = setInterval(async () => {
+      if (isMutatingRef.current) return;
+      const latestProjects = await fetchCreatorProjects(creatorEmail);
+      if (latestProjects && !isMutatingRef.current) {
+        setProjects(prev => {
+          // Detect if any project transitioned to 'utr_submitted'
+          latestProjects.forEach(latestProj => {
+            const current = prev.find(p => p.id === latestProj.id);
+            if (current && current.status !== 'utr_submitted' && latestProj.status === 'utr_submitted') {
+              playAlertChime();
+            }
+          });
+          return latestProjects;
+        });
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [viewMode, creatorEmail]);
 
   // Sync to user-scoped localStorage as backup
   useEffect(() => {
@@ -227,16 +288,22 @@ export default function App() {
 
   const activeProject = projects.find(p => p.id === activeProjectId) || projects[0] || null;
 
-  // Hydrate video mediaUrl from IndexedDB if stored locally on this device
+  // Hydrate video mediaUrl from IndexedDB ONLY if mediaUrl is missing or already a local blob (Bug #1)
   useEffect(() => {
     if (activeProject) {
-      getMediaBlobUrl(activeProject.id).then(blobUrl => {
-        if (blobUrl && blobUrl !== activeProject.mediaUrl) {
-          handleUpdateActiveProject({ mediaUrl: blobUrl });
-        }
-      });
+      const hasRealCloudUrl = activeProject.mediaUrl && 
+        (activeProject.mediaUrl.startsWith('http://') || activeProject.mediaUrl.startsWith('https://'));
+      
+      // NEVER overwrite a real Supabase Cloud URL with an IndexedDB blob URL!
+      if (!hasRealCloudUrl) {
+        getMediaBlobUrl(activeProject.id).then(blobUrl => {
+          if (blobUrl && blobUrl !== activeProject.mediaUrl) {
+            handleUpdateActiveProject({ mediaUrl: blobUrl });
+          }
+        });
+      }
     }
-  }, [activeProjectId]);
+  }, [activeProjectId, activeProject?.mediaUrl]);
 
   const handleUnlockPasscode = (projectId: string) => {
     setUnlockedPinProjects(prev => {
@@ -260,10 +327,15 @@ export default function App() {
     }));
   };
 
-  const handleAddComment = (commentData: Omit<ProjectComment, 'id' | 'createdAt' | 'resolved' | 'replies'>) => {
+  const handleAddComment = async (commentData: Omit<ProjectComment, 'id' | 'createdAt' | 'resolved' | 'replies'>) => {
     if (!activeProject) return;
+    isMutatingRef.current = true;
+    const authorRole = isEditorActor ? 'editor' : 'client';
+    const authorName = commentData.authorName?.trim() || (isEditorActor ? (activeProject.upiPayeeName || 'Editor') : 'Client');
     const newComment: ProjectComment = {
       ...commentData,
+      author: authorRole,
+      authorName,
       id: `comm-${Date.now().toString(36)}`,
       projectId: activeProject.id,
       createdAt: new Date().toISOString(),
@@ -277,12 +349,16 @@ export default function App() {
       status: activeProject.status === 'paid_unlocked' ? 'paid_unlocked' : 'revision_requested'
     });
 
-    // Sync comments to Supabase
-    updateProjectCommentsInSupabase(activeProject.id, updatedComments);
+    try {
+      await updateProjectCommentsInSupabase(activeProject.id, updatedComments);
+    } finally {
+      setTimeout(() => { isMutatingRef.current = false; }, 1000);
+    }
   };
 
-  const handleToggleResolve = (commentId: string) => {
+  const handleToggleResolve = async (commentId: string) => {
     if (!activeProject) return;
+    isMutatingRef.current = true;
     const updated = activeProject.comments.map(c => {
       if (c.id === commentId) {
         return { ...c, resolved: !c.resolved };
@@ -290,17 +366,24 @@ export default function App() {
       return c;
     });
     handleUpdateActiveProject({ comments: updated });
-    updateProjectCommentsInSupabase(activeProject.id, updated);
+    try {
+      await updateProjectCommentsInSupabase(activeProject.id, updated);
+    } finally {
+      setTimeout(() => { isMutatingRef.current = false; }, 1000);
+    }
   };
 
-  const handleAddReply = (commentId: string, replyText: string, authorName: string) => {
+  const handleAddReply = async (commentId: string, replyText: string, authorName: string) => {
     if (!activeProject) return;
+    isMutatingRef.current = true;
+    const authorRole = isEditorActor ? ('editor' as const) : ('client' as const);
+    const resolvedAuthorName = authorName.trim() || (isEditorActor ? (activeProject.upiPayeeName || 'Editor') : 'Client');
     const updated = activeProject.comments.map(c => {
       if (c.id === commentId) {
         const newReply = {
           id: `rep-${Date.now()}`,
-          author: viewMode === 'editor' ? ('editor' as const) : ('client' as const),
-          authorName,
+          author: authorRole,
+          authorName: resolvedAuthorName,
           text: replyText,
           createdAt: new Date().toISOString()
         };
@@ -309,7 +392,37 @@ export default function App() {
       return c;
     });
     handleUpdateActiveProject({ comments: updated });
-    updateProjectCommentsInSupabase(activeProject.id, updated);
+    try {
+      await updateProjectCommentsInSupabase(activeProject.id, updated);
+    } finally {
+      setTimeout(() => { isMutatingRef.current = false; }, 1000);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!activeProject) return;
+    isMutatingRef.current = true;
+    const updated = activeProject.comments.filter(c => c.id !== commentId);
+    handleUpdateActiveProject({ comments: updated });
+    try {
+      await updateProjectCommentsInSupabase(activeProject.id, updated);
+      playClickPop();
+    } finally {
+      setTimeout(() => { isMutatingRef.current = false; }, 1000);
+    }
+  };
+
+  const handleResolveAllComments = async () => {
+    if (!activeProject) return;
+    isMutatingRef.current = true;
+    const updated = activeProject.comments.map(c => ({ ...c, resolved: true }));
+    handleUpdateActiveProject({ comments: updated });
+    try {
+      await updateProjectCommentsInSupabase(activeProject.id, updated);
+      playPaymentSuccessChime();
+    } finally {
+      setTimeout(() => { isMutatingRef.current = false; }, 1000);
+    }
   };
 
   // ================= 3. STRICT ANTI-FRAUD UPI HANDLING =================
@@ -317,6 +430,7 @@ export default function App() {
   // Client submits UTR: Updates project to 'utr_submitted'
   const handleSubmitUtr = async (utrNumber: string, method: string) => {
     if (!activeProject) return;
+    isMutatingRef.current = true;
     const paymentDetails = {
       utrNumber,
       method,
@@ -329,13 +443,18 @@ export default function App() {
       paymentDetails
     });
 
-    await updateProjectStatusInSupabase(activeProject.id, 'utr_submitted', paymentDetails);
+    try {
+      await updateProjectStatusInSupabase(activeProject.id, 'utr_submitted', paymentDetails);
+    } finally {
+      setTimeout(() => { isMutatingRef.current = false; }, 1000);
+    }
   };
 
   // Creator in Studio clicks "✅ Approve & Unlock"
   const handleApproveUpiPayment = async (projectId: string) => {
     const target = projects.find(p => p.id === projectId);
     if (!target) return;
+    isMutatingRef.current = true;
 
     const paymentDetails = {
       ...(target.paymentDetails || {}),
@@ -355,12 +474,17 @@ export default function App() {
       return p;
     }));
 
-    await updateProjectStatusInSupabase(projectId, 'paid_unlocked', paymentDetails);
-    playPaymentSuccessChime();
+    try {
+      await updateProjectStatusInSupabase(projectId, 'paid_unlocked', paymentDetails, creatorEmail);
+      playPaymentSuccessChime();
+    } finally {
+      setTimeout(() => { isMutatingRef.current = false; }, 1000);
+    }
   };
 
   // Creator in Studio clicks "❌ Reject Fake UTR"
   const handleRejectUpiPayment = async (projectId: string) => {
+    isMutatingRef.current = true;
     setProjects(prev => prev.map(p => {
       if (p.id === projectId) {
         return {
@@ -373,8 +497,12 @@ export default function App() {
       return p;
     }));
 
-    await updateProjectStatusInSupabase(projectId, 'in_review', undefined);
-    playClickPop();
+    try {
+      await updateProjectStatusInSupabase(projectId, 'in_review', undefined, creatorEmail);
+      playClickPop();
+    } finally {
+      setTimeout(() => { isMutatingRef.current = false; }, 1000);
+    }
   };
 
   const handleSaveProject = (savedProj: Project) => {
@@ -389,6 +517,10 @@ export default function App() {
   };
 
   const handleDeleteProject = async (id: string) => {
+    const target = projects.find(p => p.id === id);
+    if (target?.mediaUrl) {
+      deleteMediaFromSupabase(target.mediaUrl).catch(() => {});
+    }
     setProjects(prev => {
       const filtered = prev.filter(p => p.id !== id);
       if (activeProjectId === id) {
@@ -411,10 +543,13 @@ export default function App() {
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleLogin = (email: string) => {
+  const handleLogin = (email: string, token?: string) => {
     const cleanEmail = email.toLowerCase().trim();
     setCreatorEmail(cleanEmail);
     localStorage.setItem(CREATOR_EMAIL_KEY, cleanEmail);
+    if (token) {
+      localStorage.setItem(CREATOR_TOKEN_KEY, token);
+    }
     // Load that creator's cached projects or start completely fresh
     try {
       const key = `zikro_projects_${cleanEmail}`;
@@ -444,6 +579,7 @@ export default function App() {
     setProjects([]);
     setActiveProjectId('');
     localStorage.removeItem(CREATOR_EMAIL_KEY);
+    localStorage.removeItem(CREATOR_TOKEN_KEY);
     playClickPop();
   };
 
@@ -670,7 +806,20 @@ export default function App() {
 
             {/* Client Top Action: Direct UPI Unlock CTA */}
             {activeProject && (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsInvoiceOpen(true);
+                    playClickPop();
+                  }}
+                  title="View GST-Exempt Freelance Invoice / Receipt"
+                  className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl transition flex items-center gap-1.5 text-xs font-medium"
+                >
+                  <FileText className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden sm:inline">Invoice</span>
+                </button>
+
                 <div className="text-right hidden sm:block">
                   <div className="text-[10px] text-neutral-400 uppercase font-mono">Invoice Total</div>
                   <div className="text-sm font-black text-amber-400 font-mono">
@@ -719,7 +868,7 @@ export default function App() {
               : 'bg-amber-950/40 border-amber-800/60 text-amber-200'
         }`}>
           <div className="max-w-7xl mx-auto w-full flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {isPaidUnlocked ? (
                 <>
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -741,6 +890,25 @@ export default function App() {
                 </>
               )}
             </div>
+
+            {/* PING EDITOR ON WHATSAPP WITH UTR BUTTON (UX Improvement #9) */}
+            {isUtrSubmitted && (
+              <a
+                href={`https://api.whatsapp.com/send?${
+                  activeProject.editorPhone 
+                    ? `phone=${activeProject.editorPhone.replace(/[^0-9]/g, '').length === 10 ? '91' + activeProject.editorPhone.replace(/[^0-9]/g, '') : activeProject.editorPhone.replace(/[^0-9]/g, '')}&` 
+                    : ''
+                }text=${encodeURIComponent(
+                  `Hey ${activeProject.upiPayeeName || 'Editor'}! ⚡ Maine "${activeProject.title}" (₹${activeProject.amountINR}) ka UPI payment kar diya hai.\n\n🏦 12-Digit UTR: *${activeProject.paymentDetails?.utrNumber}*\n\nPlease Zikro Studio me verify karke clean 4K file unlock kar do!`
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition shadow-md shadow-emerald-600/30 active:scale-95"
+              >
+                <MessageSquare className="w-3.5 h-3.5 fill-current" />
+                <span>📲 Ping Editor on WhatsApp with UTR</span>
+              </a>
+            )}
 
             {/* Creator Preview Passcode state toggle */}
             {isCreatorPreviewingClient && activeProject.securitySettings?.isProtected && (
@@ -818,127 +986,146 @@ export default function App() {
               This project could not be found or has not been uploaded yet. Please ask your freelance editor for an active Zikro link.
             </p>
           </div>
+        ) : (activeProject.securitySettings?.isProtected && !unlockedPinProjects.has(activeProject.id) && isClientModeOnly) ? (
+          /* Strictly isolated PIN lock screen: NO video/audio nodes rendered in DOM until correct PIN entered! (Security Flaw #9 & #7) */
+          <PasscodeLockModal
+            project={{
+              ...activeProject,
+              creatorEmail: undefined,
+              mediaUrl: ''
+            }}
+            onUnlockSuccess={() => handleUnlockPasscode(activeProject.id)}
+            isEditorViewing={false}
+          />
         ) : (
           /* ================= CLIENT REVIEW VIEW ================= */
-          <>
-            {/* Passcode Lock Screen if protected and not yet unlocked */}
-            {activeProject.securitySettings?.isProtected && !unlockedPinProjects.has(activeProject.id) && (
-              <PasscodeLockModal
-                project={activeProject}
-                onUnlockSuccess={() => handleUnlockPasscode(activeProject.id)}
-                isEditorViewing={false}
-              />
-            )}
-
-            <div className="space-y-6">
-              {/* Project Header Info */}
-              <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-neutral-800">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[11px] font-mono uppercase bg-neutral-900 border border-neutral-800 text-neutral-400 px-2 py-0.5 rounded-md">
-                      {activeProject.type === 'video' ? `Video • ${activeProject.aspectRatio}` : 'Thumbnail Graphic'}
-                    </span>
-                    <span className="text-xs text-neutral-400">
-                      Client: <strong className="text-neutral-200">{activeProject.clientName}</strong>
-                    </span>
-                  </div>
-                  <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-                    {activeProject.title}
-                  </h1>
+          <div className="space-y-6">
+            {/* Project Header Info */}
+            <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-neutral-800">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[11px] font-mono uppercase bg-neutral-900 border border-neutral-800 text-neutral-400 px-2 py-0.5 rounded-md">
+                    {activeProject.type === 'video' ? `Video • ${activeProject.aspectRatio}` : 'Thumbnail Graphic'}
+                  </span>
+                  <span className="text-xs text-neutral-400">
+                    Client: <strong className="text-neutral-200">{activeProject.clientName}</strong>
+                  </span>
                 </div>
-
-                {/* Price & Approval CTA */}
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <div className="text-[10px] text-neutral-400 uppercase font-mono">Invoice Fee</div>
-                    <div className="text-xl sm:text-2xl font-black text-amber-400 font-mono">
-                      ₹{activeProject.amountINR.toLocaleString('en-IN')}
-                    </div>
-                  </div>
-
-                  {isPaidUnlocked ? (
-                    <div className="inline-flex items-center gap-2 bg-emerald-600/30 border border-emerald-500/50 text-emerald-300 font-bold px-4 py-2.5 rounded-2xl text-xs">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                      <span>Unlocked & Settled</span>
-                    </div>
-                  ) : isUtrSubmitted ? (
-                    <button
-                      onClick={() => setIsPaymentOpen(true)}
-                      className="inline-flex items-center gap-2 bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold px-4 py-3 rounded-2xl text-xs sm:text-sm animate-pulse"
-                    >
-                      <Clock className="w-4 h-4 text-amber-400" />
-                      <span>UTR Pending Editor Check</span>
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => setIsPaymentOpen(true)}
-                      className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black px-4 py-3 rounded-2xl text-xs sm:text-sm shadow-xl shadow-amber-500/20 active:scale-95 transition"
-                    >
-                      <Lock className="w-4 h-4" />
-                      <span>Approve & Pay via UPI</span>
-                    </button>
-                  )}
-                </div>
+                <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
+                  <span>{activeProject.title}</span>
+                  <span className="text-xs font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-md">
+                    v{activeProject.version || 1}
+                  </span>
+                </h1>
               </div>
 
-              {/* Split Grid: Video Player + Timeline Comments */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                
-                {/* Left Column: Player */}
-                <div className="lg:col-span-7 flex flex-col items-center">
-                  {activeProject.type === 'video' ? (
-                    <VideoPlayerWithTimeline
-                      project={activeProject}
-                      comments={activeProject.comments}
-                      activeCommentId={activeCommentId}
-                      onSelectComment={(comm) => setActiveCommentId(comm.id)}
-                      onRequestCommentAtTime={(_timeSec) => {
-                        setActiveCommentId(null);
-                      }}
-                      onOpenPaymentModal={() => setIsPaymentOpen(true)}
-                    />
-                  ) : (
-                    <ThumbnailReviewer
-                      project={activeProject}
-                      comments={activeProject.comments}
-                      onOpenPaymentModal={() => setIsPaymentOpen(true)}
-                    />
-                  )}
+              {/* Price & Approval CTA */}
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <div className="text-[10px] text-neutral-400 uppercase font-mono">Invoice Fee</div>
+                  <div className="text-xl sm:text-2xl font-black text-amber-400 font-mono">
+                    ₹{activeProject.amountINR.toLocaleString('en-IN')}
+                  </div>
+                </div>
 
-                  {/* Client Guidance Hint Card */}
-                  <div className="w-full mt-4 p-3.5 bg-neutral-900/60 border border-neutral-800 rounded-2xl flex items-center justify-between text-xs text-neutral-400">
-                    <div className="flex items-center gap-2.5">
-                      <Smartphone className="w-4 h-4 text-amber-400 shrink-0" />
-                      <div>
-                        <div className="font-semibold text-neutral-200">How to review:</div>
-                        <div className="text-[11px] text-neutral-400">
-                          1. Tap timeline to leave point-to-point notes • 2. Hit "Approve & Pay" when satisfied • 3. Instant watermark removal!
-                        </div>
+                {isPaidUnlocked ? (
+                  <div className="inline-flex items-center gap-2 bg-emerald-600/30 border border-emerald-500/50 text-emerald-300 font-bold px-4 py-2.5 rounded-2xl text-xs">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>Unlocked & Settled</span>
+                  </div>
+                ) : isUtrSubmitted ? (
+                  <button
+                    onClick={() => setIsPaymentOpen(true)}
+                    className="inline-flex items-center gap-2 bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold px-4 py-3 rounded-2xl text-xs sm:text-sm animate-pulse"
+                  >
+                    <Clock className="w-4 h-4 text-amber-400" />
+                    <span>UTR Pending Editor Check</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setIsPaymentOpen(true)}
+                    className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black px-4 py-3 rounded-2xl text-xs sm:text-sm shadow-xl shadow-amber-500/20 active:scale-95 transition"
+                  >
+                    <Lock className="w-4 h-4" />
+                    <span>Approve & Pay via UPI</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Split Grid: Video Player + Timeline Comments */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              
+              {/* Left Column: Player */}
+              <div className="lg:col-span-7 flex flex-col items-center">
+                {activeProject.type === 'video' ? (
+                  <VideoPlayerWithTimeline
+                    project={activeProject}
+                    comments={activeProject.comments}
+                    activeCommentId={activeCommentId}
+                    onSelectComment={(comm) => setActiveCommentId(comm.id)}
+                    onCurrentTimeChange={setPlayerCurrentTime}
+                    onRequestCommentAtTime={(timeSec) => {
+                      setActiveCommentId(null);
+                      setPlayerCurrentTime(timeSec);
+                      setRequestedCommentTime(timeSec);
+                      setRequestedCommentTrigger(prev => prev + 1);
+                    }}
+                    onOpenPaymentModal={() => setIsPaymentOpen(true)}
+                    isEditorView={isEditorActor}
+                  />
+                ) : (
+                  <ThumbnailReviewer
+                    project={activeProject}
+                    comments={activeProject.comments}
+                    onOpenPaymentModal={() => setIsPaymentOpen(true)}
+                    onRequestCommentAtVisual={() => {
+                      const input = document.querySelector('input[placeholder*="comment"], input[placeholder*="subtitle"]') as HTMLInputElement;
+                      input?.focus();
+                      input?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }}
+                  />
+                )}
+
+                {/* Client Guidance Hint Card */}
+                <div className="w-full mt-4 p-3.5 bg-neutral-900/60 border border-neutral-800 rounded-2xl flex items-center justify-between text-xs text-neutral-400">
+                  <div className="flex items-center gap-2.5">
+                    <Smartphone className="w-4 h-4 text-amber-400 shrink-0" />
+                    <div>
+                      <div className="font-semibold text-neutral-200">How to review:</div>
+                      <div className="text-[11px] text-neutral-400">
+                        1. Tap timeline to leave point-to-point notes • 2. Hit "Approve & Pay" when satisfied • 3. Instant watermark removal!
                       </div>
                     </div>
                   </div>
                 </div>
-
-                {/* Right Column: Timeline Feedback List */}
-                <div className="lg:col-span-5">
-                  <TimestampComments
-                    comments={activeProject.comments}
-                    currentTime={0}
-                    activeCommentId={activeCommentId}
-                    onSeekTo={(sec) => {
-                      const videoEl = document.querySelector('video');
-                      if (videoEl) {
-                        videoEl.currentTime = sec;
-                        videoEl.play().catch(() => {});
-                      }
-                    }}
-                    onAddComment={handleAddComment}
-                    onToggleResolve={handleToggleResolve}
-                    onAddReply={handleAddReply}
-                    isEditorView={false}
-                  />
-                </div>
               </div>
+
+              {/* Right Column: Timeline Feedback List */}
+              <div className="lg:col-span-5">
+                <TimestampComments
+                  comments={activeProject.comments}
+                  currentTime={playerCurrentTime}
+                  activeCommentId={activeCommentId}
+                  requestedSnapTime={requestedCommentTime}
+                  requestedSnapTrigger={requestedCommentTrigger}
+                  onSeekTo={(sec) => {
+                    const videoEl = document.querySelector('video');
+                    if (videoEl) {
+                      videoEl.currentTime = sec;
+                      setPlayerCurrentTime(sec);
+                      videoEl.play().catch(() => {});
+                    }
+                  }}
+                  onAddComment={handleAddComment}
+                  onToggleResolve={handleToggleResolve}
+                  onAddReply={handleAddReply}
+                  onDeleteComment={handleDeleteComment}
+                  onResolveAll={handleResolveAllComments}
+                  isEditorView={isEditorActor}
+                />
+              </div>
+            </div>
 
               {/* Discrete Footer for Client View with Creator Access link */}
               <div className="mt-12 pt-6 border-t border-neutral-900 flex items-center justify-between flex-wrap gap-3 text-xs text-neutral-500">
@@ -961,7 +1148,6 @@ export default function App() {
                 </button>
               </div>
             </div>
-          </>
         )}
       </main>
 
@@ -973,6 +1159,7 @@ export default function App() {
             isOpen={isPaymentOpen}
             onClose={() => setIsPaymentOpen(false)}
             onSubmitUtr={handleSubmitUtr}
+            onOpenInvoice={() => setIsInvoiceOpen(true)}
             isEditorView={viewMode === 'editor' || isCreatorPreviewingClient}
           />
 

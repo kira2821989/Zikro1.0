@@ -11,11 +11,13 @@ import {
   Lock,
   Download,
   AlertTriangle,
-  RefreshCw
+  RefreshCw,
+  ShieldAlert
 } from 'lucide-react';
 import { Project, ProjectComment } from '../types';
 import { WatermarkOverlay } from './WatermarkOverlay';
 import { getMediaBlobUrl } from '../utils/mediaDb';
+import { getDirectDownloadUrl } from '../supabase';
 
 interface VideoPlayerProps {
   project: Project;
@@ -23,7 +25,9 @@ interface VideoPlayerProps {
   activeCommentId?: string | null;
   onSelectComment?: (comment: ProjectComment) => void;
   onRequestCommentAtTime?: (timeSeconds: number) => void;
+  onCurrentTimeChange?: (time: number) => void;
   onOpenPaymentModal: () => void;
+  isEditorView?: boolean;
 }
 
 export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
@@ -32,7 +36,9 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
   activeCommentId,
   onSelectComment,
   onRequestCommentAtTime,
+  onCurrentTimeChange,
   onOpenPaymentModal,
+  isEditorView = false,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -46,6 +52,7 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
   const [showControls, setShowControls] = useState(true);
   const [videoError, setVideoError] = useState(false);
   const [liveOpacity, setLiveOpacity] = useState<number>(0.28);
+  const [isTampered, setIsTampered] = useState(false);
   const isUnlocked = project.status === 'paid_unlocked';
 
   // FIX 1: Reset error and reload video immediately whenever project or mediaUrl changes!
@@ -53,6 +60,7 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
     setVideoError(false);
     setCurrentTime(0);
     setIsPlaying(false);
+    onCurrentTimeChange?.(0);
     if (videoRef.current) {
       videoRef.current.load();
     }
@@ -71,7 +79,9 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
 
   const handleTimeUpdate = () => {
     if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
+      const cur = videoRef.current.currentTime;
+      setCurrentTime(cur);
+      onCurrentTimeChange?.(cur);
     }
   };
 
@@ -96,8 +106,87 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
     }
   };
 
+  // ANTI-INSPECT-ELEMENT WATERMARK TAMPER SHIELD (Security Loophole #6)
+  useEffect(() => {
+    if (isUnlocked || !containerRef.current) return;
+
+    const triggerTamperLockdown = () => {
+      console.warn('🚨 Watermark tamper detected via DevTools! Locking video playback.');
+      setIsTampered(true);
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.src = '';
+      }
+    };
+
+    const checkTamper = () => {
+      if (isUnlocked) return;
+      const watermarkEl = containerRef.current?.querySelector('#zikro-anti-theft-watermark') as HTMLElement | null;
+      if (!watermarkEl) {
+        triggerTamperLockdown();
+        return;
+      }
+      const style = window.getComputedStyle(watermarkEl);
+      const opacity = parseFloat(style.opacity || '1');
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        opacity < 0.10
+      ) {
+        triggerTamperLockdown();
+        return;
+      }
+
+      // Deep subtree verification: must contain visible text and protected elements must remain visible
+      const text = (watermarkEl.innerText || watermarkEl.textContent || '').trim();
+      if (text.length <= 3) {
+        triggerTamperLockdown();
+        return;
+      }
+
+      const protectedElements = watermarkEl.querySelectorAll('[data-watermark-protected="true"]');
+      if (protectedElements.length === 0) {
+        triggerTamperLockdown();
+        return;
+      }
+
+      for (let i = 0; i < protectedElements.length; i++) {
+        const el = protectedElements[i] as HTMLElement;
+        const elStyle = window.getComputedStyle(el);
+        const elOpacity = parseFloat(elStyle.opacity || '1');
+        if (
+          elStyle.display === 'none' ||
+          elStyle.visibility === 'hidden' ||
+          elOpacity < 0.10
+        ) {
+          triggerTamperLockdown();
+          return;
+        }
+      }
+    };
+
+    const observer = new MutationObserver(() => {
+      checkTamper();
+    });
+
+    observer.observe(containerRef.current, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true,
+      attributeFilter: ['style', 'class', 'hidden']
+    });
+
+    const interval = setInterval(checkTamper, 1500);
+
+    return () => {
+      observer.disconnect();
+      clearInterval(interval);
+    };
+  }, [isUnlocked, project.mediaUrl]);
+
   const togglePlay = () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || isTampered) return;
     if (isPlaying) {
       videoRef.current.pause();
       setIsPlaying(false);
@@ -113,15 +202,18 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value);
     setCurrentTime(time);
+    onCurrentTimeChange?.(time);
     if (videoRef.current) {
       videoRef.current.currentTime = time;
     }
   };
 
   const jumpToSeconds = (sec: number) => {
+    const clamped = Math.max(0, Math.min(sec, duration));
     if (videoRef.current) {
-      videoRef.current.currentTime = Math.max(0, Math.min(sec, duration));
-      setCurrentTime(sec);
+      videoRef.current.currentTime = clamped;
+      setCurrentTime(clamped);
+      onCurrentTimeChange?.(clamped);
     }
   };
 
@@ -170,7 +262,6 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
   const handleContextMenu = (e: React.MouseEvent) => {
     if (!isUnlocked) {
       e.preventDefault();
-      alert('Right-click downloading is disabled during client review. Please click "Approve & Pay via UPI" to unlock the clean master file.');
     }
   };
 
@@ -198,7 +289,7 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
             : 'max-w-3xl aspect-[16/9]'
         }`}
       >
-        {/* HTML5 Video */}
+        {/* HTML5 Video with Anti-Download Shield */}
         <video
           ref={videoRef}
           key={`${project.id}-${project.mediaUrl}`}
@@ -206,6 +297,11 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
           playsInline
           loop
           preload="auto"
+          controlsList="nodownload noplaybackrate"
+          disablePictureInPicture={true}
+          onContextMenu={(e) => {
+            if (!isUnlocked) e.preventDefault();
+          }}
           onLoadedMetadata={handleLoadedMetadata}
           onCanPlay={() => setVideoError(false)}
           onLoadedData={() => setVideoError(false)}
@@ -230,6 +326,24 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Retry Playback</span>
+            </button>
+          </div>
+        )}
+
+        {/* Anti-Inspect-Element Watermark Tamper Lockdown Screen (Security Flaw #10) */}
+        {isTampered && (
+          <div className="absolute inset-0 bg-neutral-950/98 flex flex-col items-center justify-center p-6 text-center z-40 select-none">
+            <ShieldAlert className="w-12 h-12 text-red-500 mb-2 animate-bounce" />
+            <div className="font-bold text-white text-sm">Security Lockdown: Watermark Tampering Detected</div>
+            <p className="text-xs text-red-300 mt-1 max-w-xs leading-relaxed font-mono">
+              The confidential preview watermark was removed or modified via DevTools. Video streaming has been paused and secured.
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-3 inline-flex items-center gap-1.5 bg-red-950 border border-red-500/50 hover:bg-red-900 text-red-200 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Reload Preview Session</span>
             </button>
           </div>
         )}
@@ -397,7 +511,7 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
         {/* 2. Direct Unlock or Download Button */}
         {isUnlocked ? (
           <a
-            href={project.mediaUrl}
+            href={getDirectDownloadUrl(project.mediaUrl, `${project.title}_MASTER`)}
             download={`${project.title.replace(/\s+/g, '_')}_MASTER.mp4`}
             target="_blank"
             rel="noopener noreferrer"
@@ -417,8 +531,8 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
         )}
       </div>
 
-      {/* 3. Watermark Transparency & Review Clarity Tuner */}
-      {!isUnlocked && (
+      {/* 3. Watermark Transparency & Review Clarity Tuner (ONLY VISIBLE TO EDITOR - Security Flaw #8) */}
+      {!isUnlocked && isEditorView && (
         <div className={`w-full mt-2.5 p-2 bg-neutral-900/60 border border-neutral-800/80 rounded-xl flex items-center justify-between flex-wrap gap-2 text-[11px] ${
           isVertical ? 'max-w-[340px] sm:max-w-[380px]' : 'max-w-3xl'
         }`}>

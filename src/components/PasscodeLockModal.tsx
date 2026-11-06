@@ -68,9 +68,20 @@ export const PasscodeLockModal: React.FC<PasscodeLockModalProps> = ({
   }, [pin]);
 
   const handleAskOnWhatsApp = () => {
-    const text = encodeURIComponent(`Hey ${project.upiPayeeName}! What is the 4-digit PIN to access the "${project.title}" review link?`);
-    const cleanPhone = project.clientPhone ? project.clientPhone.replace(/[^0-9]/g, '') : '';
-    window.open(`https://api.whatsapp.com/send?${cleanPhone ? `phone=${cleanPhone}&` : ''}text=${text}`, '_blank');
+    const text = encodeURIComponent(`Hey ${project.upiPayeeName || 'Editor'}! What is the 4-digit PIN to access the "${project.title}" review link on Zikro?`);
+    const phoneToUse = project.editorPhone || '';
+    let cleanPhone = phoneToUse.replace(/[^0-9]/g, '');
+    if (cleanPhone.length === 10) {
+      cleanPhone = '91' + cleanPhone;
+    }
+    const targetUrl = cleanPhone 
+      ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${text}`
+      : `https://api.whatsapp.com/send?text=${text}`;
+    const a = document.createElement('a');
+    a.href = targetUrl;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.click();
   };
 
   return (

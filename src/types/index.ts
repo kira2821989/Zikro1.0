@@ -66,6 +66,7 @@ export interface Project {
   clientName: string;
   clientPhone?: string;
   clientEmail?: string;
+  editorPhone?: string;
   amountINR: number;
   upiId: string;
   upiPayeeName: string;
@@ -76,6 +77,7 @@ export interface Project {
   securitySettings?: SecuritySettings;
   storageInfo?: StorageInfo;
   status: ProjectStatus;
+  version?: number;
   createdAt: string;
   updatedAt: string;
   comments: ProjectComment[];

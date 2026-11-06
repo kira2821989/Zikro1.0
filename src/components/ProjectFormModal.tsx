@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Upload, 
@@ -16,7 +16,7 @@ import {
   HardDrive
 } from 'lucide-react';
 import { Project, MediaType, AspectRatio, WatermarkSpeed, WatermarkStyle } from '../types';
-import { uploadMediaToSupabase, saveProjectToSupabase } from '../supabase';
+import { uploadMediaToSupabase, saveProjectToSupabase, deleteMediaFromSupabase } from '../supabase';
 import { storeMediaBlob, formatBytes } from '../utils/mediaDb';
 import { playClickPop } from '../utils/audio';
 
@@ -46,6 +46,9 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(initialProject?.aspectRatio || '9:16');
   const [clientName, setClientName] = useState(initialProject?.clientName || '');
   const [clientPhone, setClientPhone] = useState(initialProject?.clientPhone || '');
+  const [editorPhone, setEditorPhone] = useState(
+    initialProject?.editorPhone || localStorage.getItem('zikro_saved_editor_phone') || ''
+  );
   const [amountINR, setAmountINR] = useState<number>(initialProject?.amountINR || 1500);
   const [upiId, setUpiId] = useState(initialProject?.upiId || localStorage.getItem('zikro_saved_upi') || 'editor@okhdfcbank');
   const [upiPayeeName, setUpiPayeeName] = useState(initialProject?.upiPayeeName || localStorage.getItem('zikro_saved_name') || 'Vikram Singh');
@@ -73,6 +76,66 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
   const [watermarkOpacity, setWatermarkOpacity] = useState<number>(initialProject?.watermarkSettings?.opacity || 0.28);
   const [showTimecode, setShowTimecode] = useState(initialProject?.watermarkSettings?.showTimecode ?? true);
   const [showClientTag, setShowClientTag] = useState(initialProject?.watermarkSettings?.showClientTag ?? true);
+
+  // RESET/SYNC PROJECT FORM STATE (Functional Bug #1)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (initialProject) {
+      // Edit mode: populate all fields cleanly
+      setTitle(initialProject.title || '');
+      setType(initialProject.type || 'video');
+      setAspectRatio(initialProject.aspectRatio || '9:16');
+      setClientName(initialProject.clientName || '');
+      setClientPhone(initialProject.clientPhone || '');
+      setEditorPhone(initialProject.editorPhone || localStorage.getItem('zikro_saved_editor_phone') || '');
+      setAmountINR(initialProject.amountINR || 1500);
+      setUpiId(initialProject.upiId || localStorage.getItem('zikro_saved_upi') || 'editor@okhdfcbank');
+      setUpiPayeeName(initialProject.upiPayeeName || localStorage.getItem('zikro_saved_name') || 'Vikram Singh');
+      setMediaUrl(initialProject.mediaUrl || PRESET_VIDEOS[0].url);
+      setLocalFileName(initialProject.storageInfo?.originalFileName || '');
+      setPendingFileBlob(null);
+      setFileSizeBytes(initialProject.storageInfo?.fileSizeBytes || 0);
+
+      setIsProtected(initialProject.securitySettings?.isProtected ?? false);
+      setPasscode(
+        initialProject.securitySettings?.passcode || 
+        Math.floor(1000 + Math.random() * 9000).toString()
+      );
+
+      setWatermarkText(initialProject.watermarkSettings?.text || 'ZIKRO • DRAFT REVIEW');
+      setWatermarkSpeed(initialProject.watermarkSettings?.speed || 'medium');
+      setWatermarkStyle(initialProject.watermarkSettings?.style || 'diagonal-floating');
+      setWatermarkOpacity(initialProject.watermarkSettings?.opacity ?? 0.28);
+      setShowTimecode(initialProject.watermarkSettings?.showTimecode ?? true);
+      setShowClientTag(initialProject.watermarkSettings?.showClientTag ?? true);
+    } else {
+      // New Project mode: reset all fields to clean defaults
+      setTitle('');
+      setType('video');
+      setAspectRatio('9:16');
+      setClientName('');
+      setClientPhone('');
+      setEditorPhone(localStorage.getItem('zikro_saved_editor_phone') || '');
+      setAmountINR(1500);
+      setUpiId(localStorage.getItem('zikro_saved_upi') || 'editor@okhdfcbank');
+      setUpiPayeeName(localStorage.getItem('zikro_saved_name') || 'Vikram Singh');
+      setMediaUrl(PRESET_VIDEOS[0].url);
+      setLocalFileName('');
+      setPendingFileBlob(null);
+      setFileSizeBytes(0);
+
+      setIsProtected(false);
+      setPasscode(Math.floor(1000 + Math.random() * 9000).toString());
+
+      setWatermarkText('ZIKRO • DRAFT REVIEW');
+      setWatermarkSpeed('medium');
+      setWatermarkStyle('diagonal-floating');
+      setWatermarkOpacity(0.28);
+      setShowTimecode(true);
+      setShowClientTag(true);
+    }
+  }, [initialProject, isOpen]);
 
   if (!isOpen) return null;
 
@@ -117,12 +180,22 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
     // Save default editor credentials for future projects
     localStorage.setItem('zikro_saved_upi', upiId);
     localStorage.setItem('zikro_saved_name', upiPayeeName);
+    if (editorPhone.trim()) {
+      localStorage.setItem('zikro_saved_editor_phone', editorPhone.trim());
+    }
 
     const projectId = initialProject?.id || `proj-${Date.now().toString(36)}`;
     let finalMediaUrl = mediaUrl.trim();
     let storageType: 'supabase_storage' | 'indexeddb' | 'cloud_url' = 'cloud_url';
 
-    // 1. If file was selected, ALWAYS store in local IndexedDB first for instant, guaranteed playback
+    // 1. If a new file is uploaded, and there was an existing Supabase video, delete the previous version to save storage quota
+    if (pendingFileBlob && initialProject?.mediaUrl) {
+      deleteMediaFromSupabase(initialProject.mediaUrl).catch(e => {
+        console.warn('Storage cleanup notice on re-upload:', e);
+      });
+    }
+
+    // 2. If file was selected, ALWAYS store in local IndexedDB first for instant, guaranteed playback
     if (pendingFileBlob) {
       let localCachedUrl = '';
       try {
@@ -135,7 +208,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
         console.warn('IndexedDB initial caching notice:', idbErr);
       }
 
-      // 2. ALSO attempt upload to Supabase Cloud Storage bucket 'videos'
+      // 3. ALSO attempt upload to Supabase Cloud Storage bucket 'videos'
       try {
         setUploadStatusText(`Uploading ${formatBytes(fileSizeBytes)} to Supabase Cloud Storage...`);
         const cloudUrl = await uploadMediaToSupabase(pendingFileBlob, projectId, (pct) => {
@@ -159,6 +232,16 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
     setUploadStatusText('Syncing with Supabase Cloud Database...');
     setUploadProgress(90);
 
+    // Auto-versioning (Workflow Feature #4): Increment version on re-upload
+    let projectVersion = initialProject?.version || 1;
+    let projectStatus = initialProject?.status || 'in_review';
+    if (initialProject && pendingFileBlob) {
+      projectVersion = (initialProject.version || 1) + 1;
+      if (initialProject.status === 'revision_requested') {
+        projectStatus = 'in_review';
+      }
+    }
+
     const savedProject: Project = {
       id: projectId,
       creatorEmail,
@@ -167,11 +250,13 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
       aspectRatio,
       clientName: clientName.trim(),
       clientPhone: clientPhone.trim() || undefined,
+      editorPhone: editorPhone.trim() || undefined,
       amountINR: Number(amountINR) || 1000,
       upiId: upiId.trim(),
       upiPayeeName: upiPayeeName.trim(),
       mediaUrl: finalMediaUrl,
-      status: initialProject?.status || 'in_review',
+      status: projectStatus,
+      version: projectVersion,
       createdAt: initialProject?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       comments: initialProject?.comments || [],
@@ -454,7 +539,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
               <span>Payment & UPI Details (Zero Fee)</span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div>
                 <label className="text-[11px] text-neutral-400 block mb-1">Fee in INR (₹) *</label>
                 <div className="relative">
@@ -471,6 +556,18 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
               </div>
 
               <div>
+                <label className="text-[11px] text-neutral-400 block mb-1">UPI Payee Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={upiPayeeName}
+                  onChange={(e) => setUpiPayeeName(e.target.value)}
+                  placeholder="e.g. Vikram Singh"
+                  className="w-full bg-neutral-900 border border-neutral-700 text-white text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
                 <label className="text-[11px] text-neutral-400 block mb-1">Your UPI ID *</label>
                 <input
                   type="text"
@@ -483,14 +580,13 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
               </div>
 
               <div>
-                <label className="text-[11px] text-neutral-400 block mb-1">UPI Payee Name *</label>
+                <label className="text-[11px] text-neutral-400 block mb-1">Editor WhatsApp Number (For PIN & UTR Alerts)</label>
                 <input
                   type="text"
-                  required
-                  value={upiPayeeName}
-                  onChange={(e) => setUpiPayeeName(e.target.value)}
-                  placeholder="e.g. Vikram Singh"
-                  className="w-full bg-neutral-900 border border-neutral-700 text-white text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-amber-500"
+                  value={editorPhone}
+                  onChange={(e) => setEditorPhone(e.target.value)}
+                  placeholder="e.g. 9876543210 (Auto +91)"
+                  className="w-full bg-neutral-900 border border-neutral-700 text-white font-mono text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-amber-500"
                 />
               </div>
             </div>

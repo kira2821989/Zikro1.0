@@ -12,10 +12,13 @@ import {
   CreditCard, 
   Clock,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  MessageCircle,
+  FileText
 } from 'lucide-react';
 import { Project } from '../types';
 import { playPaymentSuccessChime, playClickPop } from '../utils/audio';
+import { getDirectDownloadUrl } from '../supabase';
 
 interface UpiPaymentModalProps {
   project: Project;
@@ -23,14 +26,28 @@ interface UpiPaymentModalProps {
   onClose: () => void;
   onSubmitUtr: (utrNumber: string, method: string) => Promise<void> | void;
   isEditorView?: boolean;
+  onOpenInvoice?: () => void;
 }
+
+const getWhatsAppUrl = (phone: string | undefined, message: string): string => {
+  const encodedText = encodeURIComponent(message);
+  if (!phone || !phone.trim()) {
+    return `https://api.whatsapp.com/send?text=${encodedText}`;
+  }
+  let clean = phone.replace(/[^0-9]/g, '');
+  if (clean.length === 10) {
+    clean = `91${clean}`;
+  }
+  return `https://api.whatsapp.com/send?phone=${clean}&text=${encodedText}`;
+};
 
 export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
   project,
   isOpen,
   onClose,
   onSubmitUtr,
-  isEditorView = false
+  isEditorView = false,
+  onOpenInvoice
 }) => {
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copiedUpi, setCopiedUpi] = useState(false);
@@ -49,6 +66,14 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
 
   // Standard NPCI UPI URI string
   const upiUri = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(payeeName)}&am=${amount}&cu=INR&tn=${encodeURIComponent(note)}`;
+
+  // Sync UTR input & clear errors whenever modal opens or project payment details update
+  useEffect(() => {
+    if (isOpen) {
+      setUtrInput(project.paymentDetails?.utrNumber || '');
+      setUtrError('');
+    }
+  }, [project.id, project.paymentDetails?.utrNumber, isOpen]);
 
   // Generate QR Code on open
   useEffect(() => {
@@ -92,14 +117,9 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
     e.preventDefault();
     setUtrError('');
 
-    const cleanUtr = utrInput.trim();
-    if (!cleanUtr) {
-      setUtrError('Please enter the 12-digit UPI Reference / UTR number.');
-      return;
-    }
-
-    if (cleanUtr.length < 6) {
-      setUtrError('Invalid UTR number. Minimum 6 digits required.');
+    const cleanUtr = utrInput.replace(/\s+/g, '');
+    if (!/^\d{12}$/.test(cleanUtr)) {
+      setUtrError('❌ Please enter a valid 12-digit numeric UPI UTR / Reference number.');
       return;
     }
 
@@ -178,15 +198,29 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
 
               <div className="space-y-2 pt-2">
                 <a
-                  href={project.mediaUrl}
-                  download={`${project.title.replace(/\s+/g, '_')}_MASTER.mp4`}
+                  href={getDirectDownloadUrl(project.mediaUrl, `${project.title}_MASTER`, project.type)}
+                  download={`${project.title.replace(/\s+/g, '_')}_MASTER.${project.type === 'thumbnail' ? 'png' : 'mp4'}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="w-full inline-flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold py-3 px-4 rounded-xl text-sm transition shadow-lg shadow-emerald-500/30"
                 >
                   <Download className="w-4 h-4" />
-                  <span>Download Clean Master File</span>
+                  <span>{project.type === 'thumbnail' ? 'Download Clean HD Graphic' : 'Download Clean Master File'}</span>
                 </a>
+
+                {onOpenInvoice && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenInvoice();
+                    }}
+                    className="w-full inline-flex items-center justify-center gap-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-semibold py-2.5 px-4 rounded-xl text-xs transition border border-neutral-700 shadow-sm"
+                  >
+                    <FileText className="w-4 h-4 text-amber-400" />
+                    <span>View / Download Payment Receipt (PDF)</span>
+                  </button>
+                )}
 
                 <button
                   onClick={onClose}
@@ -213,7 +247,7 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
               <div className="p-3.5 bg-neutral-950 rounded-2xl border border-neutral-800 text-left font-mono text-xs space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-neutral-500">Submitted UTR:</span>
-                  <span className="text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                  <span className="text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 font-mono tracking-wider">
                     {project.paymentDetails?.utrNumber || utrInput}
                   </span>
                 </div>
@@ -230,12 +264,28 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
                 </div>
               </div>
 
+              {/* PING EDITOR ON WHATSAPP WITH UTR BUTTON (UX Improvement #9) */}
+              <div className="pt-1">
+                <a
+                  href={getWhatsAppUrl(
+                    project.editorPhone,
+                    `Hey ${payeeName}! ⚡ Maine "${project.title}" (₹${amount}) ka UPI payment kar diya hai.\n\n🏦 12-Digit UTR: *${project.paymentDetails?.utrNumber || utrInput}*\n\nPlease Zikro Studio me verify karke clean 4K file unlock kar do!`
+                  )}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition shadow-lg shadow-emerald-600/30 active:scale-95"
+                >
+                  <MessageCircle className="w-4 h-4 fill-current" />
+                  <span>📲 Ping Editor on WhatsApp with UTR</span>
+                </a>
+              </div>
+
               <div className="p-3 bg-neutral-950/70 border border-neutral-800 rounded-xl text-left text-[11px] text-neutral-400 space-y-1">
                 <div className="font-semibold text-neutral-300">Need it unlocked faster?</div>
                 <div>Ping the editor on WhatsApp with your payment screenshot so they can tap "Approve & Unlock" in their studio.</div>
               </div>
 
-              <div className="pt-2">
+              <div className="pt-1">
                 <button
                   onClick={onClose}
                   className="w-full bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold py-2.5 rounded-xl transition"
@@ -356,10 +406,11 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
                   <input
                     type="text"
                     required
+                    maxLength={12}
                     value={utrInput}
-                    onChange={(e) => setUtrInput(e.target.value)}
+                    onChange={(e) => setUtrInput(e.target.value.replace(/[^0-9]/g, '').slice(0, 12))}
                     placeholder="Enter 12-digit UTR (e.g. 412389123456)"
-                    className="flex-1 bg-neutral-900 border border-neutral-700 text-xs text-white rounded-xl px-3 py-2.5 focus:outline-none focus:border-amber-500 font-mono placeholder:text-neutral-600"
+                    className="flex-1 bg-neutral-900 border border-neutral-700 text-xs text-white rounded-xl px-3 py-2.5 focus:outline-none focus:border-amber-500 font-mono tracking-wider placeholder:text-neutral-600"
                   />
                   <button
                     type="submit"

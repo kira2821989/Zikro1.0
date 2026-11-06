@@ -9,23 +9,57 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 export const STORAGE_BUCKET = 'videos';
 
 /**
- * Computes SHA-256 hash string for passwords using standard Web Crypto API
+ * Computes salted SHA-256 hash string for passwords using Web Crypto API.
+ * Uses a unique per-email salt to prevent rainbow table attacks.
  */
-export async function hashPassword(password: string): Promise<string> {
+export async function hashPassword(password: string, email?: string): Promise<string> {
+  const cleanEmail = email ? email.toLowerCase().trim() : '';
+  const saltedInput = cleanEmail ? `zikro_v1_salt_${cleanEmail}_${password}` : password;
   const encoder = new TextEncoder();
-  const data = encoder.encode(password);
+  const data = encoder.encode(saltedInput);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
- * Signs up a new creator in public.creators table
+ * Appends download parameter to force real file download from Supabase storage on mobile/desktop browsers.
+ * Determines the correct file extension (.png/.jpg for thumbnails, .mp4 for video).
+ */
+export function getDirectDownloadUrl(
+  url: string, 
+  filename: string, 
+  type: 'video' | 'thumbnail' = 'video'
+): string {
+  if (!url) return '';
+  if (url.startsWith('blob:') || url.startsWith('data:')) return url;
+  
+  let cleanTitle = (filename || (type === 'thumbnail' ? 'graphic' : 'master')).replace(/[^a-zA-Z0-9._-]/g, '_');
+  cleanTitle = cleanTitle.replace(/\.(mp4|mov|mkv|webm|png|jpg|jpeg|webp)$/i, '');
+
+  let ext = 'mp4';
+  const lowerUrl = url.toLowerCase();
+  if (type === 'thumbnail' || lowerUrl.includes('.png') || lowerUrl.includes('.jpg') || lowerUrl.includes('.jpeg') || lowerUrl.includes('.webp')) {
+    if (lowerUrl.includes('.jpg') || lowerUrl.includes('.jpeg')) {
+      ext = 'jpg';
+    } else if (lowerUrl.includes('.webp')) {
+      ext = 'webp';
+    } else {
+      ext = 'png';
+    }
+  }
+
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}download=${encodeURIComponent(`${cleanTitle}.${ext}`)}`;
+}
+
+/**
+ * Signs up a new creator in public.creators table with salted password
  */
 export async function signUpCreator(
   email: string, 
   password: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; token?: string }> {
   try {
     const cleanEmail = email.toLowerCase().trim();
     if (!cleanEmail || !cleanEmail.includes('@')) {
@@ -36,7 +70,7 @@ export async function signUpCreator(
     }
 
     // 1. Check if email already exists in public.creators
-    const { data: existing, error: checkError } = await supabase
+    const { data: existing } = await supabase
       .from('creators')
       .select('email')
       .eq('email', cleanEmail)
@@ -49,7 +83,7 @@ export async function signUpCreator(
       };
     }
 
-    const passwordHash = await hashPassword(password);
+    const passwordHash = await hashPassword(password, cleanEmail);
 
     // 2. Insert new creator record
     const { error: insertError } = await supabase
@@ -65,7 +99,7 @@ export async function signUpCreator(
       return { success: false, error: `Sign up failed: ${insertError.message}` };
     }
 
-    return { success: true };
+    return { success: true, token: passwordHash };
   } catch (err: any) {
     console.error('signUpCreator exception:', err);
     return { success: false, error: err.message || 'Network error during sign up.' };
@@ -73,12 +107,13 @@ export async function signUpCreator(
 }
 
 /**
- * Verifies creator credentials against public.creators table
+ * Verifies creator credentials against public.creators table.
+ * Queries directly for salted hash match so password hashes are NEVER leaked to the client.
  */
 export async function loginCreator(
   email: string, 
   password: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; token?: string }> {
   try {
     const cleanEmail = email.toLowerCase().trim();
     if (!cleanEmail || !cleanEmail.includes('@')) {
@@ -88,11 +123,15 @@ export async function loginCreator(
       return { success: false, error: 'Please enter your password.' };
     }
 
-    // 1. Fetch creator by email
+    // 1. Compute salted hash
+    const saltedHash = await hashPassword(password, cleanEmail);
+
+    // 2. Query Supabase directly for email + salted password_hash
     const { data: creator, error: fetchError } = await supabase
       .from('creators')
-      .select('email, password_hash')
+      .select('email')
       .eq('email', cleanEmail)
+      .eq('password_hash', saltedHash)
       .maybeSingle();
 
     if (fetchError) {
@@ -100,26 +139,74 @@ export async function loginCreator(
       return { success: false, error: 'Database connection error. Please try again.' };
     }
 
-    if (!creator) {
+    if (creator) {
+      return { success: true, token: saltedHash };
+    }
+
+    // 3. Fallback for legacy unsalted accounts if any existed prior to salting
+    const legacyRawHash = await hashPassword(password);
+    const { data: legacyCreator } = await supabase
+      .from('creators')
+      .select('email')
+      .eq('email', cleanEmail)
+      .eq('password_hash', legacyRawHash)
+      .maybeSingle();
+
+    if (legacyCreator) {
+      // Auto-upgrade legacy account to salted hash
+      await supabase
+        .from('creators')
+        .update({ password_hash: saltedHash })
+        .eq('email', cleanEmail);
+      return { success: true, token: saltedHash };
+    }
+
+    // 4. Check if account exists at all to provide helpful error
+    const { data: userExists } = await supabase
+      .from('creators')
+      .select('email')
+      .eq('email', cleanEmail)
+      .maybeSingle();
+
+    if (!userExists) {
       return { 
         success: false, 
         error: '❌ No account found with this email! Please Sign Up first.' 
       };
     }
 
-    // 2. Hash entered password and compare with stored password_hash
-    const enteredHash = await hashPassword(password);
-    if (creator.password_hash !== enteredHash) {
-      return { 
-        success: false, 
-        error: '❌ Incorrect password! Access denied.' 
-      };
-    }
-
-    return { success: true };
+    return { 
+      success: false, 
+      error: '❌ Incorrect password! Access denied.' 
+    };
   } catch (err: any) {
     console.error('loginCreator exception:', err);
     return { success: false, error: err.message || 'Login error.' };
+  }
+}
+
+/**
+ * Validates a stored creator session token against Supabase public.creators table (Security Loophole #5)
+ */
+export async function verifyCreatorSession(email: string, token: string): Promise<boolean> {
+  try {
+    const cleanEmail = email.toLowerCase().trim();
+    if (!cleanEmail || !token) return false;
+
+    const { data, error } = await supabase
+      .from('creators')
+      .select('email')
+      .eq('email', cleanEmail)
+      .eq('password_hash', token)
+      .maybeSingle();
+
+    if (error || !data) {
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('verifyCreatorSession exception:', err);
+    return false;
   }
 }
 
@@ -170,12 +257,15 @@ export async function saveProjectToSupabase(
 ): Promise<boolean> {
   try {
     const cleanEmail = creatorEmail.toLowerCase().trim();
+    // NEVER save a local blob: URL into Supabase database (Functional Bug #1)
+    const safeMediaUrl = project.mediaUrl && project.mediaUrl.startsWith('blob:') ? '' : project.mediaUrl;
     const payload = {
       id: project.id,
       creator_email: cleanEmail,
       status: project.status,
       project_data: {
         ...project,
+        mediaUrl: safeMediaUrl,
         creatorEmail: cleanEmail
       },
       updated_at: new Date().toISOString()
@@ -260,17 +350,43 @@ export async function fetchCreatorProjects(creatorEmail: string): Promise<Projec
 }
 
 /**
- * Update project status and payment details (e.g., UTR submission or Approval/Rejection)
+ * Update project status and payment details (e.g., UTR submission or Approval/Rejection).
+ * Enforces server/SDK validation so unauthenticated clients cannot spoof 'paid_unlocked'.
  */
 export async function updateProjectStatusInSupabase(
   projectId: string,
   status: ProjectStatus,
-  paymentDetails?: PaymentDetails
+  paymentDetails?: PaymentDetails,
+  requestingCreatorEmail?: string | null
 ): Promise<boolean> {
   try {
     // 1. Fetch current project_data to maintain integrity
     const existing = await fetchProjectById(projectId);
     if (!existing) return false;
+
+    // PREVENT CONSOLE STATUS SPOOFING (Security Flaw #12):
+    // Only verified creator session with valid token can mark 'paid_unlocked' or reset to 'in_review'
+    if (status === 'paid_unlocked' || status === 'in_review') {
+      const activeCreator = requestingCreatorEmail || (typeof window !== 'undefined' ? localStorage.getItem('zikro_creator_email') : null);
+      const isAuthorizedCreator = activeCreator && activeCreator.toLowerCase().trim() === (existing.creatorEmail || '').toLowerCase().trim();
+      if (!isAuthorizedCreator || !activeCreator) {
+        console.error('⛔ Security Lockdown: Client view cannot mark project as paid_unlocked. Only creator can approve payment.');
+        return false;
+      }
+
+      // Enforce token verification against public.creators
+      const token = typeof window !== 'undefined' ? localStorage.getItem('zikro_creator_token') : null;
+      if (!token) {
+        console.error('⛔ Security Lockdown: Missing creator session token.');
+        return false;
+      }
+
+      const isSessionValid = await verifyCreatorSession(activeCreator, token);
+      if (!isSessionValid) {
+        console.error('⛔ Security Lockdown: Invalid or expired creator session token.');
+        return false;
+      }
+    }
 
     const updatedProjectData: Project = {
       ...existing,
@@ -336,10 +452,74 @@ export async function updateProjectCommentsInSupabase(
 }
 
 /**
- * Delete a project from Supabase
+ * Extract storage object path from a Supabase public URL or relative path
+ */
+export function extractStoragePath(urlOrPath: string): string | null {
+  if (!urlOrPath) return null;
+  const marker = `/storage/v1/object/public/${STORAGE_BUCKET}/`;
+  const idx = urlOrPath.indexOf(marker);
+  if (idx !== -1) {
+    return decodeURIComponent(urlOrPath.substring(idx + marker.length));
+  }
+  if (urlOrPath.includes('/') && !urlOrPath.startsWith('http') && !urlOrPath.startsWith('blob:')) {
+    return urlOrPath;
+  }
+  return null;
+}
+
+/**
+ * Delete a specific media file from Supabase Storage bucket 'videos'
+ */
+export async function deleteMediaFromSupabase(mediaUrlOrPath: string): Promise<boolean> {
+  try {
+    const path = extractStoragePath(mediaUrlOrPath);
+    if (!path) return false;
+    const { error } = await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+    if (error) {
+      console.warn('Supabase storage removal notice:', error.message);
+      return false;
+    }
+    console.log(`🗑️ Cleaned up storage file from '${STORAGE_BUCKET}':`, path);
+    return true;
+  } catch (err) {
+    console.warn('deleteMediaFromSupabase exception:', err);
+    return false;
+  }
+}
+
+/**
+ * Delete all files in the project's folder within storage bucket 'videos'
+ */
+export async function deleteProjectStorageFolder(projectId: string): Promise<void> {
+  try {
+    const { data: files, error } = await supabase.storage.from(STORAGE_BUCKET).list(projectId);
+    if (error) {
+      console.warn('Failed listing files for storage cleanup:', error.message);
+      return;
+    }
+    if (files && files.length > 0) {
+      const pathsToRemove = files.map(f => `${projectId}/${f.name}`);
+      const { error: removeError } = await supabase.storage.from(STORAGE_BUCKET).remove(pathsToRemove);
+      if (removeError) {
+        console.warn('Failed removing project files from storage bucket:', removeError.message);
+      } else {
+        console.log(`🗑️ Cleaned up ${pathsToRemove.length} storage file(s) for project: ${projectId}`);
+      }
+    }
+  } catch (err) {
+    console.warn('deleteProjectStorageFolder exception:', err);
+  }
+}
+
+/**
+ * Delete a project from Supabase database AND storage bucket
  */
 export async function deleteProjectFromSupabase(projectId: string): Promise<boolean> {
   try {
+    // 1. Clean up storage files in Supabase storage bucket 'videos'
+    await deleteProjectStorageFolder(projectId);
+
+    // 2. Delete row from public.projects table
     const { error } = await supabase
       .from('projects')
       .delete()

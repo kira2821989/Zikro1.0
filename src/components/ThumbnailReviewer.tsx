@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Lock, Download, ShieldCheck, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { Project, ProjectComment } from '../types';
+import { getDirectDownloadUrl } from '../supabase';
 
 interface ThumbnailReviewerProps {
   project: Project;
@@ -21,7 +22,6 @@ export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
   const handleContextMenu = (e: React.MouseEvent) => {
     if (!isUnlocked) {
       e.preventDefault();
-      alert('Saving thumbnail preview is disabled. Please unlock via UPI to download the high-resolution clean image.');
     }
   };
 
@@ -130,7 +130,7 @@ export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
 
         {isUnlocked ? (
           <a
-            href={project.mediaUrl}
+            href={getDirectDownloadUrl(project.mediaUrl, `${project.title}_HD`, 'thumbnail')}
             download={`${project.title.replace(/\s+/g, '_')}_HD.png`}
             target="_blank"
             rel="noopener noreferrer"
