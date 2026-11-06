@@ -179,18 +179,18 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
 
       {/* Projects Grid / List */}
       {projects.length === 0 ? (
-        <div className="text-center py-12 p-6 bg-neutral-900/40 rounded-2xl border border-neutral-800 border-dashed">
+        <div className="text-center py-16 p-6 bg-neutral-900/40 rounded-3xl border border-neutral-800/80 border-dashed max-w-xl mx-auto my-6">
           <Film className="w-12 h-12 text-neutral-600 mx-auto mb-3" />
-          <h3 className="text-base font-bold text-white">No projects found for {creatorEmail}</h3>
-          <p className="text-xs text-neutral-400 mt-1 max-w-sm mx-auto">
-            Click "+ New Client Project" to upload a video or thumbnail with moving watermark & UPI unlock link!
+          <h3 className="text-base font-bold text-white">No client projects yet</h3>
+          <p className="text-xs text-neutral-400 mt-1 max-w-sm mx-auto leading-relaxed">
+            Click "+ New Client Project" to upload your first video!
           </p>
           <button
             onClick={onOpenCreateModal}
-            className="mt-4 inline-flex items-center gap-1.5 bg-amber-500 text-neutral-950 font-bold px-4 py-2 rounded-xl text-xs"
+            className="mt-5 inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-bold px-4 py-2.5 rounded-xl text-xs transition shadow-lg shadow-amber-500/20 active:scale-95"
           >
             <Plus className="w-4 h-4" />
-            <span>Create First Project</span>
+            <span>+ New Client Project</span>
           </button>
         </div>
       ) : (

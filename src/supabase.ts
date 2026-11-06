@@ -169,13 +169,14 @@ export async function saveProjectToSupabase(
   creatorEmail: string
 ): Promise<boolean> {
   try {
+    const cleanEmail = creatorEmail.toLowerCase().trim();
     const payload = {
       id: project.id,
-      creator_email: creatorEmail,
+      creator_email: cleanEmail,
       status: project.status,
       project_data: {
         ...project,
-        creatorEmail
+        creatorEmail: cleanEmail
       },
       updated_at: new Date().toISOString()
     };
@@ -230,10 +231,11 @@ export async function fetchProjectById(projectId: string): Promise<Project | nul
  */
 export async function fetchCreatorProjects(creatorEmail: string): Promise<Project[]> {
   try {
+    const cleanEmail = creatorEmail.toLowerCase().trim();
     const { data, error } = await supabase
       .from('projects')
       .select('*')
-      .eq('creator_email', creatorEmail)
+      .eq('creator_email', cleanEmail)
       .order('updated_at', { ascending: false });
 
     if (error) {

@@ -33,7 +33,6 @@ import {
 } from 'lucide-react';
 
 import { Project, ProjectComment, ProjectStatus } from './types';
-import { INITIAL_PROJECTS } from './data/sampleProjects';
 import { VideoPlayerWithTimeline } from './components/VideoPlayerWithTimeline';
 import { ThumbnailReviewer } from './components/ThumbnailReviewer';
 import { TimestampComments } from './components/TimestampComments';
@@ -55,8 +54,22 @@ import {
 import { getMediaBlobUrl } from './utils/mediaDb';
 import { playClickPop, playPaymentSuccessChime } from './utils/audio';
 
-const STORAGE_KEY = 'zikro_projects_v2';
 const CREATOR_EMAIL_KEY = 'zikro_creator_email';
+
+// Clean up old demo localStorage keys to avoid cross-contamination
+if (typeof window !== 'undefined') {
+  try {
+    localStorage.removeItem('editlock_projects_v2');
+    localStorage.removeItem('zikro_projects_v2');
+  } catch {
+    // ignore
+  }
+}
+
+const getCreatorStorageKey = (email: string | null) => {
+  if (!email) return null;
+  return `zikro_projects_${email.toLowerCase().trim()}`;
+};
 
 export default function App() {
   // Check if client accessed via shared review link (e.g. ?project=id&mode=client)
@@ -70,7 +83,8 @@ export default function App() {
   // Multi-user Creator session
   const [creatorEmail, setCreatorEmail] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem(CREATOR_EMAIL_KEY) || null;
+      const saved = localStorage.getItem(CREATOR_EMAIL_KEY);
+      return saved ? saved.toLowerCase().trim() : null;
     }
     return null;
   });
@@ -80,14 +94,20 @@ export default function App() {
     return isDirectClientLink ? 'client' : 'editor';
   });
 
-  // Projects state: strictly starts empty if no projects saved
+  // Projects state: strictly starts empty or loaded from user-scoped storage key
   const [projects, setProjects] = useState<Project[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed: Project[] = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed;
+      if (typeof window !== 'undefined') {
+        const email = localStorage.getItem(CREATOR_EMAIL_KEY);
+        if (email) {
+          const key = `zikro_projects_${email.toLowerCase().trim()}`;
+          const saved = localStorage.getItem(key);
+          if (saved) {
+            const parsed: Project[] = JSON.parse(saved);
+            if (Array.isArray(parsed)) {
+              return parsed;
+            }
+          }
         }
       }
     } catch (e) {
@@ -193,14 +213,17 @@ export default function App() {
     return () => clearInterval(interval);
   }, [viewMode, activeProjectId]);
 
-  // Sync to localStorage as backup
+  // Sync to user-scoped localStorage as backup
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+      const key = getCreatorStorageKey(creatorEmail);
+      if (key) {
+        localStorage.setItem(key, JSON.stringify(projects));
+      }
     } catch (e) {
       console.warn('Failed saving to localStorage:', e);
     }
-  }, [projects]);
+  }, [projects, creatorEmail]);
 
   const activeProject = projects.find(p => p.id === activeProjectId) || projects[0] || null;
 
@@ -389,13 +412,37 @@ export default function App() {
   };
 
   const handleLogin = (email: string) => {
-    setCreatorEmail(email);
-    localStorage.setItem(CREATOR_EMAIL_KEY, email);
+    const cleanEmail = email.toLowerCase().trim();
+    setCreatorEmail(cleanEmail);
+    localStorage.setItem(CREATOR_EMAIL_KEY, cleanEmail);
+    // Load that creator's cached projects or start completely fresh
+    try {
+      const key = `zikro_projects_${cleanEmail}`;
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setProjects(parsed);
+          setActiveProjectId(parsed[0]?.id || '');
+        } else {
+          setProjects([]);
+          setActiveProjectId('');
+        }
+      } else {
+        setProjects([]);
+        setActiveProjectId('');
+      }
+    } catch {
+      setProjects([]);
+      setActiveProjectId('');
+    }
     setViewMode('editor');
   };
 
   const handleLogout = () => {
     setCreatorEmail(null);
+    setProjects([]);
+    setActiveProjectId('');
     localStorage.removeItem(CREATOR_EMAIL_KEY);
     playClickPop();
   };
@@ -731,7 +778,7 @@ export default function App() {
           <EditorDashboard
             projects={projects}
             activeProjectId={activeProjectId}
-            creatorEmail={creatorEmail || 'editor.vikram@gmail.com'}
+            creatorEmail={creatorEmail || ''}
             onSelectProject={(id) => setActiveProjectId(id)}
             onOpenCreateModal={() => {
               setEditingProject(null);
@@ -952,7 +999,7 @@ export default function App() {
         }}
         onSave={handleSaveProject}
         initialProject={editingProject}
-        creatorEmail={creatorEmail || 'editor.vikram@gmail.com'}
+        creatorEmail={creatorEmail || ''}
       />
     </div>
   );

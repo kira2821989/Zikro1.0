@@ -262,7 +262,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
               required
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Viral Gym Reel (Before vs After) v1"
+              placeholder="e.g. Brand Promo Video Edit v1"
               className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
             />
           </div>
@@ -427,7 +427,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
                 required
                 value={clientName}
                 onChange={(e) => setClientName(e.target.value)}
-                placeholder="e.g. Rohit Verma"
+                placeholder="e.g. Rahul Sharma"
                 className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
               />
             </div>
