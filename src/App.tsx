@@ -21,7 +21,6 @@ import {
   Sparkles,
   Zap,
   ArrowRight,
-  RotateCcw,
   CheckCircle2,
   ExternalLink,
   ShieldCheck,
@@ -81,37 +80,25 @@ export default function App() {
     return isDirectClientLink ? 'client' : 'editor';
   });
 
-  // Projects state
+  // Projects state: strictly starts empty if no projects saved
   const [projects, setProjects] = useState<Project[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed: Project[] = JSON.parse(saved);
-        return parsed.map(p => {
-          let mediaUrl = p.mediaUrl;
-          if (mediaUrl && mediaUrl.includes('commondatastorage.googleapis.com')) {
-            mediaUrl = 'https://www.w3schools.com/html/mov_bbb.mp4';
-          }
-          return {
-            ...p,
-            mediaUrl,
-            watermarkSettings: {
-              ...p.watermarkSettings,
-              text: p.watermarkSettings?.text?.replace(/EDITLOCK/gi, 'ZIKRO') || 'ZIKRO • DRAFT REVIEW',
-              opacity: Math.min(p.watermarkSettings?.opacity || 0.28, 0.35)
-            }
-          };
-        });
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
       }
     } catch (e) {
       console.warn('Failed reading from localStorage:', e);
     }
-    return INITIAL_PROJECTS;
+    return [];
   });
 
   const [activeProjectId, setActiveProjectId] = useState<string>(() => {
     if (urlProjectId) return urlProjectId;
-    return projects[0]?.id || 'proj-reel-gym-01';
+    return projects[0]?.id || '';
   });
 
   const [isLoadingCloud, setIsLoadingCloud] = useState(false);
@@ -163,25 +150,17 @@ export default function App() {
   }, [urlProjectId]);
 
   // When Creator logs in, fetch all projects belonging to their email from Supabase
+  // NEVER seed or fallback to sample projects if empty—keep list empty with ₹0 metrics!
   useEffect(() => {
     if (creatorEmail && viewMode === 'editor') {
       setIsLoadingCloud(true);
       fetchCreatorProjects(creatorEmail).then(cloudProjects => {
         setIsLoadingCloud(false);
+        setProjects(cloudProjects);
         if (cloudProjects.length > 0) {
-          setProjects(cloudProjects);
           setActiveProjectId(cloudProjects[0].id);
         } else {
-          // New creator without projects: seed with personalized sample projects and sync to Supabase
-          const personalizedSeed = INITIAL_PROJECTS.map(p => ({
-            ...p,
-            creatorEmail,
-            upiId: `${creatorEmail.split('@')[0]}@okhdfcbank`,
-            upiPayeeName: creatorEmail.split('@')[0].toUpperCase()
-          }));
-          setProjects(personalizedSeed);
-          setActiveProjectId(personalizedSeed[0].id);
-          personalizedSeed.forEach(p => saveProjectToSupabase(p, creatorEmail));
+          setActiveProjectId('');
         }
       });
     }
@@ -223,7 +202,7 @@ export default function App() {
     }
   }, [projects]);
 
-  const activeProject = projects.find(p => p.id === activeProjectId) || projects[0] || INITIAL_PROJECTS[0];
+  const activeProject = projects.find(p => p.id === activeProjectId) || projects[0] || null;
 
   // Hydrate video mediaUrl from IndexedDB if stored locally on this device
   useEffect(() => {
@@ -249,6 +228,7 @@ export default function App() {
   };
 
   const handleUpdateActiveProject = (updated: Partial<Project>) => {
+    if (!activeProject) return;
     setProjects(prev => prev.map(p => {
       if (p.id === activeProject.id) {
         return { ...p, ...updated, updatedAt: new Date().toISOString() };
@@ -258,6 +238,7 @@ export default function App() {
   };
 
   const handleAddComment = (commentData: Omit<ProjectComment, 'id' | 'createdAt' | 'resolved' | 'replies'>) => {
+    if (!activeProject) return;
     const newComment: ProjectComment = {
       ...commentData,
       id: `comm-${Date.now().toString(36)}`,
@@ -278,6 +259,7 @@ export default function App() {
   };
 
   const handleToggleResolve = (commentId: string) => {
+    if (!activeProject) return;
     const updated = activeProject.comments.map(c => {
       if (c.id === commentId) {
         return { ...c, resolved: !c.resolved };
@@ -289,6 +271,7 @@ export default function App() {
   };
 
   const handleAddReply = (commentId: string, replyText: string, authorName: string) => {
+    if (!activeProject) return;
     const updated = activeProject.comments.map(c => {
       if (c.id === commentId) {
         const newReply = {
@@ -308,8 +291,9 @@ export default function App() {
 
   // ================= 3. STRICT ANTI-FRAUD UPI HANDLING =================
   
-  // Client submits UTR: Updates project to 'utr_submitted' (DO NOT UNLOCK IMMEDIATELY!)
+  // Client submits UTR: Updates project to 'utr_submitted'
   const handleSubmitUtr = async (utrNumber: string, method: string) => {
+    if (!activeProject) return;
     const paymentDetails = {
       utrNumber,
       method,
@@ -384,30 +368,17 @@ export default function App() {
   const handleDeleteProject = async (id: string) => {
     setProjects(prev => {
       const filtered = prev.filter(p => p.id !== id);
-      if (activeProjectId === id && filtered.length > 0) {
-        setActiveProjectId(filtered[0].id);
+      if (activeProjectId === id) {
+        setActiveProjectId(filtered.length > 0 ? filtered[0].id : '');
       }
       return filtered;
     });
     await deleteProjectFromSupabase(id);
   };
 
-  const handleResetSampleData = () => {
-    if (confirm('Reset to default sample projects?')) {
-      const seed = INITIAL_PROJECTS.map(p => ({
-        ...p,
-        creatorEmail: creatorEmail || 'editor.vikram@gmail.com'
-      }));
-      setProjects(seed);
-      setActiveProjectId(seed[0].id);
-      localStorage.removeItem(STORAGE_KEY);
-      seed.forEach(p => saveProjectToSupabase(p, creatorEmail || 'editor.vikram@gmail.com'));
-      playClickPop();
-    }
-  };
-
   const handleCopyClientLink = (projectId?: string) => {
-    const targetId = projectId || activeProject.id;
+    const targetId = projectId || activeProject?.id;
+    if (!targetId) return;
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
     const shareUrl = `${origin}${pathname}?project=${targetId}&mode=client`;
@@ -429,10 +400,10 @@ export default function App() {
     playClickPop();
   };
 
-  const isUnlocked = activeProject.status === 'paid_unlocked';
+  const isUnlocked = activeProject?.status === 'paid_unlocked';
   const isPaidUnlocked = isUnlocked;
-  const isUtrSubmitted = activeProject.status === 'utr_submitted';
-  const clientReviewUrl = typeof window !== 'undefined' 
+  const isUtrSubmitted = activeProject?.status === 'utr_submitted';
+  const clientReviewUrl = typeof window !== 'undefined' && activeProject
     ? `${window.location.origin}${window.location.pathname}?project=${activeProject.id}&mode=client` 
     : '';
 
@@ -445,7 +416,7 @@ export default function App() {
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col bg-grid-pattern pb-12 selection:bg-amber-500 selection:text-neutral-950">
       
       {/* 1. CREATOR PREVIEW NOTIFICATION BANNER (Only shown when Creator is previewing Client View) */}
-      {viewMode === 'client' && isCreatorPreviewingClient && (
+      {viewMode === 'client' && isCreatorPreviewingClient && activeProject && (
         <div className="bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 text-neutral-950 px-3 sm:px-6 py-2 text-xs font-semibold flex items-center justify-between shadow-lg sticky top-0 z-50 flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <Eye className="w-4 h-4 shrink-0" />
@@ -455,7 +426,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Creator Demo Simulator (ONLY visible in creator preview mode, never to real client) */}
+            {/* Creator Demo Simulator */}
             <button
               onClick={() => {
                 const nextStatus: ProjectStatus = isUnlocked ? 'in_review' : 'paid_unlocked';
@@ -517,24 +488,26 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Project Switcher for Creator */}
-              <div className="relative hidden md:block ml-2">
-                <select
-                  value={activeProjectId}
-                  onChange={(e) => {
-                    setActiveProjectId(e.target.value);
-                    playClickPop();
-                  }}
-                  className="bg-neutral-900 border border-neutral-700/80 hover:border-amber-500 text-neutral-200 text-xs rounded-xl px-3 py-1.5 pr-8 appearance-none focus:outline-none cursor-pointer max-w-[210px] truncate"
-                >
-                  {projects.map(p => (
-                    <option key={p.id} value={p.id}>
-                      {p.title} (₹{p.amountINR})
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="w-3.5 h-3.5 text-neutral-400 absolute right-2.5 top-2.5 pointer-events-none" />
-              </div>
+              {/* Project Switcher for Creator (only shown when creator has projects) */}
+              {projects.length > 0 && (
+                <div className="relative hidden md:block ml-2">
+                  <select
+                    value={activeProjectId}
+                    onChange={(e) => {
+                      setActiveProjectId(e.target.value);
+                      playClickPop();
+                    }}
+                    className="bg-neutral-900 border border-neutral-700/80 hover:border-amber-500 text-neutral-200 text-xs rounded-xl px-3 py-1.5 pr-8 appearance-none focus:outline-none cursor-pointer max-w-[210px] truncate"
+                  >
+                    {projects.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.title} (₹{p.amountINR})
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-neutral-400 absolute right-2.5 top-2.5 pointer-events-none" />
+                </div>
+              )}
             </div>
 
             {/* Creator Studio Right Actions */}
@@ -554,47 +527,55 @@ export default function App() {
               </div>
 
               {/* Preview as Client button */}
-              <button
-                onClick={() => {
-                  setViewMode('client');
-                  setIsCreatorPreviewingClient(true);
-                  playClickPop();
-                }}
-                title="See exactly what client sees on their screen"
-                className="inline-flex items-center gap-1.5 text-xs bg-neutral-900 hover:bg-neutral-800 border border-amber-500/40 text-amber-300 font-semibold px-3 py-1.5 rounded-xl transition shadow-sm"
-              >
-                <Eye className="w-3.5 h-3.5 text-amber-400" />
-                <span>Preview Client View</span>
-              </button>
+              {activeProject && (
+                <button
+                  onClick={() => {
+                    setViewMode('client');
+                    setIsCreatorPreviewingClient(true);
+                    playClickPop();
+                  }}
+                  title="See exactly what client sees on their screen"
+                  className="inline-flex items-center gap-1.5 text-xs bg-neutral-900 hover:bg-neutral-800 border border-amber-500/40 text-amber-300 font-semibold px-3 py-1.5 rounded-xl transition shadow-sm"
+                >
+                  <Eye className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Preview Client View</span>
+                </button>
+              )}
 
               {/* Copy Client Link */}
-              <button
-                onClick={() => handleCopyClientLink()}
-                title="Copy secret review link to send client"
-                className="inline-flex items-center gap-1.5 text-xs bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 px-3 py-1.5 rounded-xl transition"
-              >
-                {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-amber-400" />}
-                <span className="hidden sm:inline">{copiedLink ? 'Copied Link!' : 'Copy Link'}</span>
-              </button>
+              {activeProject && (
+                <button
+                  onClick={() => handleCopyClientLink()}
+                  title="Copy secret review link to send client"
+                  className="inline-flex items-center gap-1.5 text-xs bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 px-3 py-1.5 rounded-xl transition"
+                >
+                  {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-amber-400" />}
+                  <span className="hidden sm:inline">{copiedLink ? 'Copied Link!' : 'Copy Link'}</span>
+                </button>
+              )}
 
               {/* WhatsApp Share */}
-              <button
-                onClick={() => setIsWhatsAppOpen(true)}
-                title="Share via WhatsApp"
-                className="inline-flex items-center gap-1.5 text-xs bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl transition font-medium"
-              >
-                <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="hidden sm:inline">WhatsApp</span>
-              </button>
+              {activeProject && (
+                <button
+                  onClick={() => setIsWhatsAppOpen(true)}
+                  title="Share via WhatsApp"
+                  className="inline-flex items-center gap-1.5 text-xs bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl transition font-medium"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline">WhatsApp</span>
+                </button>
+              )}
 
               {/* Invoice Generator */}
-              <button
-                onClick={() => setIsInvoiceOpen(true)}
-                title="Generate GST-Exempt Freelance Invoice"
-                className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition hidden sm:block"
-              >
-                <FileText className="w-4 h-4" />
-              </button>
+              {activeProject && (
+                <button
+                  onClick={() => setIsInvoiceOpen(true)}
+                  title="Generate GST-Exempt Freelance Invoice"
+                  className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition hidden sm:block"
+                >
+                  <FileText className="w-4 h-4" />
+                </button>
+              )}
 
               {/* New Project CTA */}
               <button
@@ -604,10 +585,10 @@ export default function App() {
                   playClickPop();
                 }}
                 title="Create New Client Project"
-                className="inline-flex items-center gap-1 text-xs bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold px-3 py-1.5 rounded-xl transition shadow-md shadow-amber-500/20 active:scale-95"
+                className="inline-flex items-center gap-1 text-xs bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold px-3.5 py-1.5 rounded-xl transition shadow-md shadow-amber-500/20 active:scale-95"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">New Project</span>
+                <span>New Project</span>
               </button>
             </div>
           </div>
@@ -617,7 +598,7 @@ export default function App() {
         <header className="sticky top-0 z-40 bg-neutral-950/95 backdrop-blur-md border-b border-neutral-800/90 shadow-md">
           <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3">
             
-            {/* Client Portal Branding (No editor controls, no other clients) */}
+            {/* Client Portal Branding */}
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center text-neutral-950 font-black shadow-md shadow-amber-500/20">
                 <Lock className="w-4 h-4" />
@@ -632,88 +613,91 @@ export default function App() {
                     <span>CLIENT REVIEW PORTAL</span>
                   </span>
                 </div>
-                <div className="text-[10px] text-neutral-400 truncate max-w-[200px] sm:max-w-xs">
-                  Reviewing for: <strong className="text-neutral-200">{activeProject.clientName}</strong>
-                </div>
+                {activeProject && (
+                  <div className="text-[10px] text-neutral-400 truncate max-w-[200px] sm:max-w-xs">
+                    Reviewing for: <strong className="text-neutral-200">{activeProject.clientName}</strong>
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Client Top Action: Direct UPI Unlock CTA */}
-            <div className="flex items-center gap-3">
-              <div className="text-right hidden sm:block">
-                <div className="text-[10px] text-neutral-400 uppercase font-mono">Invoice Total</div>
-                <div className="text-sm font-black text-amber-400 font-mono">
-                  ₹{activeProject.amountINR.toLocaleString('en-IN')}
+            {activeProject && (
+              <div className="flex items-center gap-3">
+                <div className="text-right hidden sm:block">
+                  <div className="text-[10px] text-neutral-400 uppercase font-mono">Invoice Total</div>
+                  <div className="text-sm font-black text-amber-400 font-mono">
+                    ₹{activeProject.amountINR.toLocaleString('en-IN')}
+                  </div>
                 </div>
-              </div>
 
-              {isPaidUnlocked ? (
-                <div className="inline-flex items-center gap-1.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold px-3 py-1.5 rounded-xl text-xs">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Payment Settled</span>
-                </div>
-              ) : isUtrSubmitted ? (
-                <button
-                  onClick={() => setIsPaymentOpen(true)}
-                  className="inline-flex items-center gap-1.5 bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold px-3 py-2 rounded-xl text-xs animate-pulse"
-                >
-                  <Clock className="w-3.5 h-3.5 text-amber-400" />
-                  <span>UTR Pending Check</span>
-                </button>
-              ) : (
-                <button
-                  onClick={() => {
-                    setIsPaymentOpen(true);
-                    playClickPop();
-                  }}
-                  className="inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs shadow-lg shadow-amber-500/20 active:scale-95 transition"
-                >
-                  <Lock className="w-3.5 h-3.5" />
-                  <span>Approve & Pay via UPI</span>
-                </button>
-              )}
-            </div>
+                {isPaidUnlocked ? (
+                  <div className="inline-flex items-center gap-1.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold px-3 py-1.5 rounded-xl text-xs">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Payment Settled</span>
+                  </div>
+                ) : isUtrSubmitted ? (
+                  <button
+                    onClick={() => setIsPaymentOpen(true)}
+                    className="inline-flex items-center gap-1.5 bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold px-3 py-2 rounded-xl text-xs animate-pulse"
+                  >
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>UTR Pending Check</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setIsPaymentOpen(true);
+                      playClickPop();
+                    }}
+                    className="inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs shadow-lg shadow-amber-500/20 active:scale-95 transition"
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Approve & Pay via UPI</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </header>
       )}
 
       {/* 3. STATUS BAR (Explaining watermark / unlocked status) */}
-      <div className={`w-full py-2 px-4 text-xs font-medium border-b flex items-center justify-between flex-wrap gap-2 transition-colors ${
-        isPaidUnlocked 
-          ? 'bg-emerald-950/60 border-emerald-800 text-emerald-200' 
-          : isUtrSubmitted
-            ? 'bg-amber-950/70 border-amber-700/80 text-amber-200 animate-pulse-subtle'
-            : 'bg-amber-950/40 border-amber-800/60 text-amber-200'
-      }`}>
-        <div className="max-w-7xl mx-auto w-full flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            {isPaidUnlocked ? (
-              <>
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Payment Confirmed (₹{activeProject.amountINR.toLocaleString('en-IN')}). Watermark removed & clean 4K master file is unlocked!</span>
-              </>
-            ) : isUtrSubmitted ? (
-              <>
-                <Clock className="w-4 h-4 text-amber-400 shrink-0 animate-spin" />
-                <span>
-                  <strong>⏳ UTR Submitted ({activeProject.paymentDetails?.utrNumber}):</strong> Waiting for editor to verify bank credit. Video will unlock automatically once approved.
-                </span>
-              </>
-            ) : (
-              <>
-                <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>
-                  <strong>Draft Watermark Active:</strong> Pay ₹{activeProject.amountINR.toLocaleString('en-IN')} via UPI to automatically unlock and download the clean original file.
-                </span>
-              </>
-            )}
-          </div>
+      {activeProject && (
+        <div className={`w-full py-2 px-4 text-xs font-medium border-b flex items-center justify-between flex-wrap gap-2 transition-colors ${
+          isPaidUnlocked 
+            ? 'bg-emerald-950/60 border-emerald-800 text-emerald-200' 
+            : isUtrSubmitted
+              ? 'bg-amber-950/70 border-amber-700/80 text-amber-200 animate-pulse-subtle'
+              : 'bg-amber-950/40 border-amber-800/60 text-amber-200'
+        }`}>
+          <div className="max-w-7xl mx-auto w-full flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              {isPaidUnlocked ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Payment Confirmed (₹{activeProject.amountINR.toLocaleString('en-IN')}). Watermark removed & clean 4K master file is unlocked!</span>
+                </>
+              ) : isUtrSubmitted ? (
+                <>
+                  <Clock className="w-4 h-4 text-amber-400 shrink-0 animate-spin" />
+                  <span>
+                    <strong>⏳ UTR Submitted ({activeProject.paymentDetails?.utrNumber}):</strong> Waiting for editor to verify bank credit. Video will unlock automatically once approved.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>
+                    <strong>Draft Watermark Active:</strong> Pay ₹{activeProject.amountINR.toLocaleString('en-IN')} via UPI to automatically unlock and download the clean original file.
+                  </span>
+                </>
+              )}
+            </div>
 
-          {/* Dev/Creator testing buttons - only shown in Editor mode or Creator Preview */}
-          {(viewMode === 'editor' || isCreatorPreviewingClient) && (
-            <div className="flex items-center gap-3 text-xs flex-wrap font-mono text-[11px]">
-              {/* Passcode State Toggle */}
-              {activeProject.securitySettings?.isProtected && (
+            {/* Creator Preview Passcode state toggle */}
+            {isCreatorPreviewingClient && activeProject.securitySettings?.isProtected && (
+              <div className="flex items-center gap-3 text-xs flex-wrap font-mono text-[11px]">
                 <button
                   onClick={() => {
                     setUnlockedPinProjects(prev => {
@@ -734,20 +718,11 @@ export default function App() {
                     ? `[Re-Lock PIN: ${activeProject.securitySettings.passcode}]` 
                     : `[PIN: ${activeProject.securitySettings.passcode} (Locked)]`}
                 </button>
-              )}
-
-              <button
-                onClick={handleResetSampleData}
-                title="Reset Sample Projects"
-                className="text-neutral-400 hover:text-white flex items-center gap-1"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span className="hidden sm:inline">Reset Demo</span>
-              </button>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 4. MAIN WORKSPACE */}
       <main className="max-w-7xl mx-auto px-3 sm:px-6 pt-6 flex-1 w-full">
@@ -787,6 +762,15 @@ export default function App() {
             onApproveUpiPayment={handleApproveUpiPayment}
             onRejectUpiPayment={handleRejectUpiPayment}
           />
+        ) : !activeProject ? (
+          /* Client View: No Project Found */
+          <div className="text-center py-20 p-6 bg-neutral-900/60 rounded-3xl border border-neutral-800 max-w-lg mx-auto my-8">
+            <Lock className="w-12 h-12 text-neutral-600 mx-auto mb-3" />
+            <h2 className="text-lg font-bold text-white">Review Link Not Found</h2>
+            <p className="text-xs text-neutral-400 mt-1 max-w-sm mx-auto leading-relaxed">
+              This project could not be found or has not been uploaded yet. Please ask your freelance editor for an active Zikro link.
+            </p>
+          </div>
         ) : (
           /* ================= CLIENT REVIEW VIEW ================= */
           <>
@@ -935,26 +919,30 @@ export default function App() {
       </main>
 
       {/* 5. MODALS */}
-      <UpiPaymentModal
-        project={activeProject}
-        isOpen={isPaymentOpen}
-        onClose={() => setIsPaymentOpen(false)}
-        onSubmitUtr={handleSubmitUtr}
-        isEditorView={viewMode === 'editor' || isCreatorPreviewingClient}
-      />
+      {activeProject && (
+        <>
+          <UpiPaymentModal
+            project={activeProject}
+            isOpen={isPaymentOpen}
+            onClose={() => setIsPaymentOpen(false)}
+            onSubmitUtr={handleSubmitUtr}
+            isEditorView={viewMode === 'editor' || isCreatorPreviewingClient}
+          />
 
-      <WhatsAppShareModal
-        project={activeProject}
-        isOpen={isWhatsAppOpen}
-        onClose={() => setIsWhatsAppOpen(false)}
-        reviewUrl={clientReviewUrl}
-      />
+          <WhatsAppShareModal
+            project={activeProject}
+            isOpen={isWhatsAppOpen}
+            onClose={() => setIsWhatsAppOpen(false)}
+            reviewUrl={clientReviewUrl}
+          />
 
-      <InvoiceModal
-        project={activeProject}
-        isOpen={isInvoiceOpen}
-        onClose={() => setIsInvoiceOpen(false)}
-      />
+          <InvoiceModal
+            project={activeProject}
+            isOpen={isInvoiceOpen}
+            onClose={() => setIsInvoiceOpen(false)}
+          />
+        </>
+      )}
 
       <ProjectFormModal
         isOpen={isProjectFormOpen}
