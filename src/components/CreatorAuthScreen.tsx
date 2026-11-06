@@ -88,36 +88,6 @@ export const CreatorAuthScreen: React.FC<CreatorAuthScreenProps> = ({
     }
   };
 
-  const handleQuickDemoAuth = async (demoEmail: string, demoPass: string) => {
-    setEmail(demoEmail);
-    setPassword(demoPass);
-    setErrorMsg('');
-    setSuccessMsg('');
-    setIsSubmitting(true);
-    playClickPop();
-
-    // Try login first; if account does not exist yet, sign up automatically
-    const loginResult = await loginCreator(demoEmail, demoPass);
-    if (loginResult.success) {
-      playPaymentSuccessChime();
-      onLogin(demoEmail, loginResult.token);
-      return;
-    }
-
-    // If no account found, register the demo account
-    if (loginResult.error && loginResult.error.includes('No account found')) {
-      const signupResult = await signUpCreator(demoEmail, demoPass);
-      if (signupResult.success) {
-        playPaymentSuccessChime();
-        onLogin(demoEmail, signupResult.token);
-        return;
-      }
-    }
-
-    setErrorMsg(loginResult.error || 'Demo login failed.');
-    setIsSubmitting(false);
-  };
-
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col justify-center items-center px-4 py-8 bg-grid-pattern selection:bg-amber-500 selection:text-neutral-950">
       
@@ -292,41 +262,6 @@ export const CreatorAuthScreen: React.FC<CreatorAuthScreenProps> = ({
               )}
             </button>
           </form>
-
-          {/* Quick Demo Logins */}
-          <div className="mt-6 pt-5 border-t border-neutral-800 space-y-2">
-            <div className="text-[10px] font-mono uppercase text-neutral-500 text-center tracking-wider">
-              Quick Test Demo Accounts:
-            </div>
-            
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickDemoAuth('vikram.edits@gmail.com', 'Vikram@1234')}
-                className="text-left p-2.5 rounded-xl bg-neutral-950/70 hover:bg-neutral-800 border border-neutral-800 hover:border-amber-500/40 transition text-xs group"
-              >
-                <div className="font-semibold text-neutral-200 group-hover:text-amber-300 truncate">
-                  Vikram Edits
-                </div>
-                <div className="text-[10px] text-neutral-500 truncate">
-                  vikram.edits@...
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickDemoAuth('priya.designs@gmail.com', 'Priya@1234')}
-                className="text-left p-2.5 rounded-xl bg-neutral-950/70 hover:bg-neutral-800 border border-neutral-800 hover:border-amber-500/40 transition text-xs group"
-              >
-                <div className="font-semibold text-neutral-200 group-hover:text-amber-300 truncate">
-                  Priya Designs
-                </div>
-                <div className="text-[10px] text-neutral-500 truncate">
-                  priya.designs@...
-                </div>
-              </button>
-            </div>
-          </div>
         </div>
 
         {/* Feature Badges Footer */}

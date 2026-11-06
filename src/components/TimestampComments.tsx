@@ -296,7 +296,7 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
             placeholder={
               mediaType === 'thumbnail'
                 ? 'Leave visual design feedback on this thumbnail...'
-                : `e.g. "Bhai ${formatTime(targetTime)} par subtitle font change karo..."`
+                : `e.g. "Tighten cut at ${formatTime(targetTime)}" or "Subtitle font bold karo..."`
             }
             className="flex-1 bg-neutral-900 border border-neutral-700/80 focus:border-amber-500 text-neutral-100 text-xs rounded-xl px-3.5 py-2.5 focus:outline-none placeholder:text-neutral-500"
           />
@@ -310,21 +310,24 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
           </button>
         </div>
 
-        {/* Quick suggestions */}
+        {/* Quick suggestions (English & Hinglish mix) */}
         <div className="flex items-center gap-1.5 mt-2 overflow-x-auto pb-0.5 text-[11px] text-neutral-400">
           <span className="text-[10px] uppercase font-mono text-neutral-500 shrink-0">Quick:</span>
           {(mediaType === 'thumbnail'
             ? [
                 'Make title text bigger & bolder',
                 'Boost subject glow / contrast',
+                'Font color thoda bright karo',
                 'Change background color tone',
-                'Move logo to top corner'
+                'Logo top corner me shift karo'
               ]
             : [
+                'Tighten cut / pacing here',
+                'Lower background music volume',
+                'Fix subtitle spelling / font',
                 'Beat drop pe SFX loud karo',
-                'Subtitle yellow bold karo',
                 'Cut thoda fast karo',
-                'Logo 2 sec pehle add karo'
+                'Subtitle yellow bold karo'
               ]
           ).map((quick, i) => (
             <button
