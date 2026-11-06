@@ -331,6 +331,11 @@ export async function saveProjectToSupabase(
     const cleanEmail = creatorEmail.toLowerCase().trim();
     // NEVER save a local blob: URL into Supabase database (Functional Bug #1)
     const safeMediaUrl = project.mediaUrl && project.mediaUrl.startsWith('blob:') ? '' : project.mediaUrl;
+    const passcodeHash =
+      project.securitySettings?.isProtected && project.securitySettings?.passcode
+        ? await hashPassword(project.securitySettings.passcode, project.id)
+        : project.securitySettings?.passcodeHash;
+
     const payload = {
       id: project.id,
       creator_email: cleanEmail,
@@ -338,7 +343,13 @@ export async function saveProjectToSupabase(
       project_data: {
         ...project,
         mediaUrl: safeMediaUrl,
-        creatorEmail: cleanEmail
+        creatorEmail: cleanEmail,
+        securitySettings: project.securitySettings
+          ? {
+              ...project.securitySettings,
+              passcodeHash
+            }
+          : undefined
       },
       updated_at: new Date().toISOString()
     };
@@ -360,11 +371,13 @@ export async function saveProjectToSupabase(
 
 /**
  * Fetch a single project by ID (used for client review and direct links).
- * Strips creatorEmail when returning project data for unauthenticated client views.
+ * Strips creatorEmail and plaintext passcode when returning project data for unauthenticated client views,
+ * and withholds mediaUrl while PIN lock is active.
  */
 export async function fetchProjectById(
   projectId: string,
-  includeCreatorEmail = false
+  includeCreatorEmail = false,
+  forcePinUnlocked = false
 ): Promise<Project | null> {
   try {
     const { data, error } = await supabase
@@ -391,11 +404,48 @@ export async function fetchProjectById(
       activeCreator.toLowerCase().trim() === rawCreatorEmail.toLowerCase().trim()
     );
 
+    const isPrivilegedCall = includeCreatorEmail || isAuthenticatedOwner;
+
+    // Check if client has already unlocked this project's PIN in the current session
+    let isSessionPinUnlocked = forcePinUnlocked;
+    if (!isSessionPinUnlocked && typeof window !== 'undefined') {
+      try {
+        const savedPins = sessionStorage.getItem('zikro_unlocked_pins');
+        if (savedPins) {
+          const parsedIds: string[] = JSON.parse(savedPins);
+          if (Array.isArray(parsedIds) && parsedIds.includes(data.id)) {
+            isSessionPinUnlocked = true;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const isPinProtected = Boolean(projectData.securitySettings?.isProtected);
+    const rawPasscode = projectData.securitySettings?.passcode;
+    const computedPasscodeHash =
+      projectData.securitySettings?.passcodeHash ||
+      (rawPasscode ? await hashPassword(rawPasscode, data.id) : undefined);
+
+    // For client view: NEVER expose plaintext passcode in network/state object, and withhold mediaUrl until PIN is verified
+    const safeSecuritySettings = projectData.securitySettings
+      ? {
+          isProtected: isPinProtected,
+          passcode: isPrivilegedCall ? rawPasscode : undefined,
+          passcodeHash: computedPasscodeHash
+        }
+      : undefined;
+
+    const shouldWithholdMedia = !isPrivilegedCall && isPinProtected && !isSessionPinUnlocked;
+
     return {
       ...projectData,
       id: data.id,
       status: (data.status as ProjectStatus) || projectData.status,
-      creatorEmail: (includeCreatorEmail || isAuthenticatedOwner) ? rawCreatorEmail : undefined,
+      creatorEmail: isPrivilegedCall ? rawCreatorEmail : undefined,
+      mediaUrl: shouldWithholdMedia ? '' : projectData.mediaUrl,
+      securitySettings: safeSecuritySettings,
       updatedAt: data.updated_at || projectData.updatedAt
     };
   } catch (err) {

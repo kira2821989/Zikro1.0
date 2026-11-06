@@ -110,7 +110,15 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
 
   // ANTI-INSPECT-ELEMENT WATERMARK TAMPER SHIELD (Security Loophole #6)
   useEffect(() => {
-    if (isUnlocked || !containerRef.current) return;
+    if (isUnlocked) {
+      setIsTampered(false);
+      if (videoRef.current && project.mediaUrl && (!videoRef.current.src || videoRef.current.src === window.location.href)) {
+        videoRef.current.src = project.mediaUrl;
+        videoRef.current.load();
+      }
+      return;
+    }
+    if (!containerRef.current) return;
 
     const triggerTamperLockdown = () => {
       console.warn('🚨 Watermark tamper detected via DevTools! Locking video playback.');
@@ -123,6 +131,14 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
 
     const checkTamper = () => {
       if (isUnlocked) return;
+      // Bypass visibility threshold checks when native fullscreen is active to prevent false mobile browser UI resize alerts
+      if (
+        typeof document !== 'undefined' &&
+        (document.fullscreenElement || (document as any).webkitFullscreenElement)
+      ) {
+        return;
+      }
+
       const watermarkEl = containerRef.current?.querySelector('#zikro-anti-theft-watermark') as HTMLElement | null;
       if (!watermarkEl) {
         triggerTamperLockdown();
@@ -335,7 +351,7 @@ export const VideoPlayerWithTimeline: React.FC<VideoPlayerProps> = ({
         )}
 
         {/* Anti-Inspect-Element Watermark Tamper Lockdown Screen (Security Flaw #10) */}
-        {isTampered && (
+        {isTampered && !isUnlocked && (
           <div className="absolute inset-0 bg-neutral-950/98 flex flex-col items-center justify-center p-6 text-center z-40 select-none">
             <ShieldAlert className="w-12 h-12 text-red-500 mb-2 animate-bounce" />
             <div className="font-bold text-white text-sm">Security Lockdown: Watermark Tampering Detected</div>

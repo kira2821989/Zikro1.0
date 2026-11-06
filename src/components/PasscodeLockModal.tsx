@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Lock, Unlock, KeyRound, MessageSquare, ArrowRight, ShieldAlert, Delete } from 'lucide-react';
 import { Project } from '../types';
+import { hashPassword } from '../supabase';
 import { playClickPop } from '../utils/audio';
 
 interface PasscodeLockModalProps {
@@ -18,7 +19,8 @@ export const PasscodeLockModal: React.FC<PasscodeLockModalProps> = ({
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  const targetPasscode = project.securitySettings?.passcode || '1234';
+  const targetPasscode = project.securitySettings?.passcode;
+  const targetPasscodeHash = project.securitySettings?.passcodeHash;
 
   const handleKeyPress = (digit: string) => {
     if (pin.length < 4) {
@@ -41,8 +43,13 @@ export const PasscodeLockModal: React.FC<PasscodeLockModalProps> = ({
     }
   };
 
-  const verifyPin = (candidatePin: string) => {
-    if (candidatePin === targetPasscode) {
+  const verifyPin = async (candidatePin: string) => {
+    const candidateHash = await hashPassword(candidatePin, project.id);
+    const isMatch =
+      (targetPasscodeHash && candidateHash === targetPasscodeHash) ||
+      (targetPasscode && candidatePin === targetPasscode);
+
+    if (isMatch) {
       setHasError(false);
       onUnlockSuccess();
     } else {

@@ -46,7 +46,8 @@ export interface PaymentDetails {
 
 export interface SecuritySettings {
   isProtected: boolean;
-  passcode?: string; // 4-digit PIN e.g. "4821"
+  passcode?: string; // 4-digit PIN e.g. "4821" (only exposed to creator)
+  passcodeHash?: string; // Salted SHA-256 hash of 4-digit PIN for client verification without leaking plaintext PIN
 }
 
 export interface StorageInfo {

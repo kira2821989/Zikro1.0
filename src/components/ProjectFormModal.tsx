@@ -249,7 +249,12 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
     e.preventDefault();
     if (!clientName.trim() || !mediaUrl.trim()) return;
 
-    const finalUpiId = upiId.trim() || effectiveSettings.upiId || 'editor@okhdfcbank';
+    const finalUpiId = upiId.trim() || effectiveSettings.upiId?.trim() || '';
+    if (!finalUpiId.trim()) {
+      setUploadError('❌ Please enter your receiving UPI ID so client payments reach your bank!');
+      return;
+    }
+
     const resolvedTitle = title.trim() || (localFileName ? localFileName.replace(/\.[^/.]+$/, '') : `${clientName.trim()} - Video Draft`);
     const resolvedPayeeName = upiPayeeName.trim() || defaultPayeeFromEmail;
 

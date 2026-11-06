@@ -138,7 +138,7 @@ export default function App() {
   // Anti-flicker mutation flag to avoid overwriting optimistic UI updates during 4s polling (Bug #3)
   const isMutatingRef = useRef(false);
 
-  const [isLoadingCloud, setIsLoadingCloud] = useState(false);
+  const [isLoadingCloud, setIsLoadingCloud] = useState<boolean>(() => Boolean(urlProjectId));
   const [isCreatorPreviewingClient, setIsCreatorPreviewingClient] = useState(false);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -347,7 +347,7 @@ export default function App() {
     }
   }, [activeProjectId, activeProject?.mediaUrl]);
 
-  const handleUnlockPasscode = (projectId: string) => {
+  const handleUnlockPasscode = async (projectId: string) => {
     setUnlockedPinProjects(prev => {
       const next = new Set(prev);
       next.add(projectId);
@@ -357,6 +357,12 @@ export default function App() {
       return next;
     });
     playPaymentSuccessChime();
+
+    // Fetch full project with unlocked mediaUrl now that PIN is verified
+    const unlockedProj = await fetchProjectById(projectId, false, true);
+    if (unlockedProj) {
+      setProjects(prev => prev.map(p => (p.id === projectId ? unlockedProj : p)));
+    }
   };
 
   const handleUpdateActiveProject = (updated: Partial<Project>) => {
@@ -1073,6 +1079,15 @@ export default function App() {
               playClickPop();
             }}
           />
+        ) : isLoadingCloud && !activeProject ? (
+          /* Client View: Loading Cloud Project (Prevents 1-second "Review Link Not Found" flicker) */
+          <div className="text-center py-24 p-6 bg-neutral-900/60 rounded-3xl border border-neutral-800 max-w-lg mx-auto my-8 flex flex-col items-center justify-center gap-3 animate-in fade-in">
+            <Loader2 className="w-10 h-10 text-amber-400 animate-spin" />
+            <h2 className="text-base sm:text-lg font-bold text-white">Loading Zikro Secure Review...</h2>
+            <p className="text-xs text-neutral-400 max-w-xs mx-auto">
+              Connecting to encrypted client review workspace
+            </p>
+          </div>
         ) : !activeProject ? (
           /* Client View: No Project Found */
           <div className="text-center py-20 p-6 bg-neutral-900/60 rounded-3xl border border-neutral-800 max-w-lg mx-auto my-8">
@@ -1236,6 +1251,13 @@ export default function App() {
                   onClick={() => {
                     setIsCreatorPreviewingClient(false);
                     setViewMode('editor');
+                    if (typeof window !== 'undefined' && activeProject?.id) {
+                      window.history.replaceState(
+                        {},
+                        '',
+                        `${window.location.pathname}?project=${activeProject.id}`
+                      );
+                    }
                     playClickPop();
                   }}
                   className="text-neutral-400 hover:text-amber-400 transition flex items-center gap-1 font-medium"

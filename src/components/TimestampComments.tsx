@@ -67,13 +67,6 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
     setAuthorName(isEditorView ? 'Editor' : 'Client');
   }, [isEditorView]);
 
-  // Keep targetTime synchronized to current video playback position when user hasn't typed a comment yet
-  useEffect(() => {
-    if (!commentText.trim()) {
-      setTargetTime(currentTime);
-    }
-  }, [currentTime, commentText]);
-
   // When client clicks "Comment at X:XX", snap targetTime and auto-focus comment input
   useEffect(() => {
     if (requestedSnapTime !== undefined && requestedSnapTime !== null && requestedSnapTrigger) {

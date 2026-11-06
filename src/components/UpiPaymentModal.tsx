@@ -364,6 +364,9 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
                     <span className="text-[11px] font-semibold text-white">Paytm / Any</span>
                   </a>
                 </div>
+                <div className="text-[11px] text-neutral-400 bg-neutral-950/70 border border-neutral-800/80 rounded-xl px-3 py-2 mt-1.5 leading-snug">
+                  📱 iPhone (iOS) Users: Please scan the QR code above using any UPI app on your phone.
+                </div>
               </div>
 
               {/* Copy UPI ID */}
