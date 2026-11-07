@@ -87,10 +87,13 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
     return acc + p.comments.filter(c => !c.resolved).length;
   }, 0);
 
-  const pendingUtrProjects = projects.filter(p => p.status === 'utr_submitted');
+  const isPendingUtrStatus = (status: string) =>
+    status === 'utr_submitted' || status === 'verification_pending';
+
+  const pendingUtrProjects = projects.filter(p => isPendingUtrStatus(p.status));
 
   const utrCount = pendingUtrProjects.length;
-  const pendingPaymentCount = projects.filter(p => p.status !== 'paid_unlocked' && p.status !== 'utr_submitted').length;
+  const pendingPaymentCount = projects.filter(p => p.status !== 'paid_unlocked' && !isPendingUtrStatus(p.status)).length;
   const revisionsCount = projects.filter(p => p.comments.some(c => !c.resolved) || p.status === 'revision_requested').length;
   const paidCount = projects.filter(p => p.status === 'paid_unlocked').length;
 
@@ -102,10 +105,10 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
       if (!matchTitle && !matchClient) return false;
     }
 
-    if (statusFilter === 'utr') return proj.status === 'utr_submitted';
+    if (statusFilter === 'utr') return isPendingUtrStatus(proj.status);
     if (statusFilter === 'paid') return proj.status === 'paid_unlocked';
     if (statusFilter === 'revisions') return proj.comments.some(c => !c.resolved) || proj.status === 'revision_requested';
-    if (statusFilter === 'pending') return proj.status !== 'paid_unlocked' && proj.status !== 'utr_submitted';
+    if (statusFilter === 'pending') return proj.status !== 'paid_unlocked' && !isPendingUtrStatus(proj.status);
     return true;
   });
 
@@ -344,9 +347,13 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
           {filteredProjects.map((proj) => {
             const isSelected = activeProjectId === proj.id;
             const isPaid = proj.status === 'paid_unlocked';
-            const isUtrSubmitted = proj.status === 'utr_submitted';
+            const isUtrSubmitted = isPendingUtrStatus(proj.status);
             const unresolvedComments = proj.comments.filter(c => !c.resolved).length;
             const isCopied = copiedProjectId === proj.id;
+            const isLocalOnly =
+              proj.storageInfo?.storageType === 'indexeddb' ||
+              !proj.mediaUrl ||
+              proj.mediaUrl.startsWith('blob:');
 
             return (
               <div
@@ -415,10 +422,16 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                       </span>
                       <span className="text-[10px] font-mono font-bold bg-neutral-950/85 backdrop-blur-md text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded-md">
                         v{proj.version || 1}
+                        {proj.versions && proj.versions.length > 1 ? ` (${proj.versions.length} drafts)` : ''}
                       </span>
-                      {proj.storageInfo?.storageType === 'indexeddb' || !proj.mediaUrl || proj.mediaUrl.startsWith('blob:') ? (
+                      {isLocalOnly ? (
                         <span className="text-[10px] text-amber-300 bg-neutral-950/90 border border-amber-500/40 px-1.5 py-0.5 rounded-md font-mono">
-                          ⚠️ Local
+                          ⚠️ Local Preview
+                        </span>
+                      ) : proj.storageInfo?.storageType === 'cloudinary' ? (
+                        <span className="text-[10px] text-purple-300 bg-purple-950/80 border border-purple-500/40 px-1.5 py-0.5 rounded-md font-mono flex items-center gap-1 font-semibold">
+                          <Cloud className="w-3 h-3 text-purple-400" />
+                          <span>Cloudinary CDN</span>
                         </span>
                       ) : proj.storageInfo?.storageType === 'supabase_storage' ? (
                         <span className="text-[10px] text-sky-400 bg-neutral-950/85 border border-sky-500/30 px-1.5 py-0.5 rounded-md font-mono flex items-center gap-0.5">
@@ -433,7 +446,7 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                       {isUtrSubmitted ? (
                         <span className="inline-flex items-center gap-1 text-[10px] font-black bg-amber-500 text-neutral-950 px-2 py-0.5 rounded-full shadow-md">
                           <Zap className="w-3 h-3 fill-current" />
-                          <span>UTR SUBMITTED</span>
+                          <span>VERIFICATION PENDING</span>
                         </span>
                       ) : isPaid ? (
                         <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-950/90 backdrop-blur-md text-emerald-300 border border-emerald-500/50 px-2 py-0.5 rounded-full">
@@ -466,6 +479,16 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
 
                   {/* Card Body: Title, Client, Fee & Protection */}
                   <div className="p-4 space-y-3">
+                    {/* Cross-Device Local IndexedDB Warning Badge */}
+                    {isLocalOnly && (
+                      <div className="p-2 rounded-xl bg-amber-950/50 border border-amber-500/40 text-[10px] text-amber-200 flex items-start gap-1.5 leading-snug">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                        <span>
+                          Local Device Preview Only — Upload to Cloud R2/Supabase to share across devices.
+                        </span>
+                      </div>
+                    )}
+
                     {/* Title & Client */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -484,49 +507,55 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                         <span className="text-[10px] text-neutral-500 block">Fee Due</span>
                         <span className="font-bold text-amber-400 text-sm">₹{proj.amountINR.toLocaleString('en-IN')}</span>
                       </div>
-                      <div className="text-right flex flex-col items-end">
+                      <div className="text-right flex flex-col items-end gap-0.5">
                         <span className="text-[10px] text-neutral-500 block">Protection</span>
-                        {proj.securitySettings?.isProtected ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-amber-300 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
-                            <KeyRound className="w-2.5 h-2.5 text-amber-400" />
-                            <span>PIN: {proj.securitySettings.passcode}</span>
-                          </span>
-                        ) : (
-                          <span className="text-[11px] text-neutral-400">Direct Link</span>
-                        )}
+                        <div className="flex items-center gap-1 flex-wrap justify-end">
+                          {proj.securitySettings?.isProtected ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] text-amber-300 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
+                              <KeyRound className="w-2.5 h-2.5 text-amber-400" />
+                              <span>PIN: {proj.securitySettings.passcode}</span>
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-neutral-400">Direct Link</span>
+                          )}
+                          {proj.securitySettings?.maxViews && proj.securitySettings.maxViews > 0 ? (
+                            <span className="text-[10px] bg-neutral-900 border border-neutral-700 text-neutral-300 px-1.5 py-0.5 rounded">
+                              {proj.securitySettings.viewCount || 0}/{proj.securitySettings.maxViews} views
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
 
-                    {/* ================= UTR APPROVAL / REJECTION CARD ================= */}
+                    {/* ================= MANUAL UTR VERIFICATION GATE CARD ================= */}
                     {isUtrSubmitted && (
                       <div className="p-3 bg-amber-950/40 border border-amber-500/50 rounded-xl space-y-2 animate-in fade-in">
-                        {/* Bouncing Amber Alert */}
                         <div className="flex items-center gap-1.5 text-xs text-amber-950 font-bold bg-amber-400 px-2.5 py-1.5 rounded-lg animate-bounce shadow-md">
                           <Zap className="w-3.5 h-3.5 fill-current shrink-0" />
-                          <span>⚡ NEW UTR SUBMITTED! Verify bank credit.</span>
+                          <span>⚡ Payment Verification Pending with Editor</span>
                         </div>
 
                         <div className="flex items-center justify-between text-xs">
                           <span className="text-amber-300 font-semibold flex items-center gap-1">
                             <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                            <span>Client Submitted UTR:</span>
+                            <span>Client 12-Digit UTR:</span>
                           </span>
                           <span className="font-mono font-bold text-white bg-black/60 px-2 py-0.5 rounded border border-amber-500/30">
                             {proj.paymentDetails?.utrNumber || 'N/A'}
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div className="grid grid-cols-1 gap-1.5 pt-1">
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               onApproveUpiPayment(proj.id);
                             }}
-                            className="inline-flex items-center justify-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 px-2 rounded-lg text-xs transition shadow-md"
+                            className="w-full inline-flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-3 rounded-lg text-xs transition shadow-md"
                           >
                             <Check className="w-3.5 h-3.5" />
-                            <span>Approve & Unlock</span>
+                            <span>Verify UTR & Unlock Master</span>
                           </button>
 
                           <button
@@ -537,7 +566,7 @@ export const EditorDashboard: React.FC<EditorDashboardProps> = ({
                                 onRejectUpiPayment(proj.id);
                               }
                             }}
-                            className="inline-flex items-center justify-center gap-1 bg-red-950/80 hover:bg-red-900 border border-red-500/50 text-red-300 font-semibold py-1.5 px-2 rounded-lg text-xs transition"
+                            className="w-full inline-flex items-center justify-center gap-1 bg-red-950/80 hover:bg-red-900 border border-red-500/50 text-red-300 font-semibold py-1.5 px-2 rounded-lg text-xs transition"
                           >
                             <XCircle className="w-3.5 h-3.5" />
                             <span>Reject Fake UTR</span>

@@ -57,12 +57,15 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
   const [utrError, setUtrError] = useState('');
 
   const isPaidUnlocked = project.status === 'paid_unlocked';
-  const isPendingVerification = project.status === 'utr_submitted';
+  const isPendingVerification =
+    project.status === 'utr_submitted' || project.status === 'verification_pending';
 
-  const upiId = project.upiId || 'creator@okhdfcbank';
+  const upiId = project.upiId || 'creator@upi';
   const payeeName = project.upiPayeeName || 'Freelance Editor';
   const amount = project.amountINR;
   const note = `Zikro - ${project.title.slice(0, 25)}`;
+  const cleanMasterDownloadUrl =
+    project.masterVideoUrl || project.previewVideoUrl || project.mediaUrl;
 
   // Standard NPCI UPI URI string
   const upiUri = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(payeeName)}&am=${amount}&cu=INR&tn=${encodeURIComponent(note)}`;
@@ -198,7 +201,7 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
 
               <div className="space-y-2 pt-2">
                 <a
-                  href={getDirectDownloadUrl(project.mediaUrl, `${project.title}_MASTER`, project.type)}
+                  href={getDirectDownloadUrl(cleanMasterDownloadUrl, `${project.title}_MASTER`, project.type)}
                   download={`${project.title.replace(/\s+/g, '_')}_MASTER.${project.type === 'thumbnail' ? 'png' : 'mp4'}`}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -238,9 +241,9 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
               </div>
 
               <div>
-                <h3 className="text-lg font-bold text-white">UTR Submitted — Awaiting Verification</h3>
+                <h3 className="text-lg font-bold text-white">Payment Verification Pending with Editor</h3>
                 <p className="text-xs text-amber-300/90 mt-1 max-w-sm mx-auto leading-relaxed">
-                  Your reference number has been sent to the editor. Video will unlock automatically once they verify the bank credit.
+                  Your 12-digit UTR reference number has been sent to the editor. The clean master video will unlock as soon as they verify the bank credit and tap "Verify UTR & Unlock Master".
                 </p>
               </div>
 
@@ -259,7 +262,7 @@ export const UpiPaymentModal: React.FC<UpiPaymentModalProps> = ({
                   <span className="text-neutral-500">Live Auto-Check:</span>
                   <span className="text-emerald-400 flex items-center gap-1 text-[11px]">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                    Polling Supabase Cloud (every 4s)
+                    Supabase Realtime Live Sync (0.1s)
                   </span>
                 </div>
               </div>

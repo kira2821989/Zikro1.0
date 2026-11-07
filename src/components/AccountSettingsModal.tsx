@@ -8,7 +8,9 @@ import {
   Shield,
   ShieldCheck,
   Check,
-  AlertCircle
+  AlertCircle,
+  Cloud,
+  Loader2
 } from 'lucide-react';
 import { CreatorSettings } from '../types';
 import { playClickPop, playPaymentSuccessChime } from '../utils/audio';
@@ -18,7 +20,7 @@ interface AccountSettingsModalProps {
   onClose: () => void;
   creatorEmail: string;
   settings: CreatorSettings;
-  onSaveSettings: (newSettings: CreatorSettings) => void;
+  onSaveSettings: (newSettings: CreatorSettings) => Promise<void> | void;
 }
 
 export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
@@ -36,6 +38,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   );
   const [autoFillUpi, setAutoFillUpi] = useState(settings.autoFillUpi ?? true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
 
   useEffect(() => {
@@ -46,6 +49,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     setDefaultWatermarkText(settings.defaultWatermarkText || 'ZIKRO • DRAFT REVIEW');
     setAutoFillUpi(settings.autoFillUpi ?? true);
     setErrorMsg(null);
+    setIsSaving(false);
     setSavedToast(false);
   }, [isOpen, settings, creatorEmail]);
 
@@ -57,13 +61,13 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     return /^[a-zA-Z0-9.\-_]{2,}@[a-zA-Z0-9.\-_]{2,}$/.test(clean);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
     const cleanUpi = upiId.trim();
     if (!cleanUpi || !isValidUpiFormat(cleanUpi)) {
-      setErrorMsg('Please enter a valid UPI ID in the format name@bank (e.g. rohit@okaxis or 9876543210@ybl).');
+      setErrorMsg('Please enter a valid UPI ID in the format name@bank (e.g. creator@upi).');
       return;
     }
 
@@ -75,13 +79,18 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
       autoFillUpi
     };
 
-    onSaveSettings(updated);
-    playPaymentSuccessChime();
-    setSavedToast(true);
-    setTimeout(() => {
-      setSavedToast(false);
-      onClose();
-    }, 650);
+    setIsSaving(true);
+    try {
+      await onSaveSettings(updated);
+      playPaymentSuccessChime();
+      setSavedToast(true);
+      setTimeout(() => {
+        setSavedToast(false);
+        onClose();
+      }, 700);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -94,7 +103,13 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
               <Settings className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">Account & Payout Settings</h3>
+              <h3 className="text-base font-bold text-white flex items-center gap-1.5">
+                <span>Account & Payout Settings</span>
+                <span className="text-[10px] font-mono bg-sky-500/15 text-sky-400 border border-sky-500/30 px-1.5 py-0.5 rounded inline-flex items-center gap-1">
+                  <Cloud className="w-3 h-3" />
+                  <span>Cloud Synced</span>
+                </span>
+              </h3>
               <p className="text-xs text-neutral-400 truncate max-w-[230px]">
                 Set up once for <strong className="text-neutral-200">{creatorEmail}</strong>
               </p>
@@ -122,7 +137,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
           {savedToast && (
             <div className="p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-2xl flex items-center gap-2 text-xs text-emerald-200 font-semibold animate-in fade-in">
               <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Settings saved! All new projects will use these defaults.</span>
+              <span>Synced to Supabase Cloud! Your UPI ID now auto-fills on all devices.</span>
             </div>
           )}
 
@@ -143,7 +158,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                 setUpiId(e.target.value);
                 setErrorMsg(null);
               }}
-              placeholder="e.g. yourname@okaxis or 9876543210@ybl"
+              placeholder="e.g. creator@upi"
               className="w-full bg-neutral-900 border border-neutral-700 focus:border-amber-500 text-white font-mono text-sm rounded-xl px-3.5 py-2.5 focus:outline-none transition"
             />
             <div className="flex items-start gap-2 p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-[11px] text-emerald-300 leading-relaxed">
@@ -164,7 +179,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
               type="text"
               value={upiPayeeName}
               onChange={(e) => setUpiPayeeName(e.target.value)}
-              placeholder="e.g. Vikram Edits"
+              placeholder="e.g. Studio Edits"
               className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 text-white text-sm rounded-xl px-3.5 py-2.5 focus:outline-none transition"
             />
           </div>
@@ -181,7 +196,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                 type="tel"
                 value={editorPhone.replace(/^\+?91/, '')}
                 onChange={(e) => setEditorPhone(e.target.value.replace(/[^0-9]/g, '').slice(0, 10))}
-                placeholder="9876543210"
+                placeholder="0000000000"
                 className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 text-white font-mono text-sm rounded-xl pl-12 pr-3.5 py-2.5 focus:outline-none transition"
               />
             </div>
@@ -234,10 +249,20 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
             </button>
             <button
               type="submit"
-              className="flex-2 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black rounded-xl text-xs transition shadow-lg shadow-amber-500/20 flex items-center justify-center gap-1.5"
+              disabled={isSaving}
+              className="flex-2 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 text-neutral-950 font-black rounded-xl text-xs transition shadow-lg shadow-amber-500/20 flex items-center justify-center gap-1.5"
             >
-              <Check className="w-4 h-4" />
-              <span>Save Account Settings</span>
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Syncing to Cloud...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span>Save Account Settings</span>
+                </>
+              )}
             </button>
           </div>
         </form>

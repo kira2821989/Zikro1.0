@@ -1,12 +1,13 @@
 /**
  * Zikro IndexedDB Media Persistence Engine
- * Enables zero-budget storage of full 1080p/4K client review videos
- * directly on the device with persistent playback across page reloads.
+ * Enables local device caching of client review videos with automatic
+ * URL.createObjectURL lifecycle management to prevent iOS Safari memory crashes.
  */
 
 const DB_NAME = 'editlock_media_db';
 const DB_VERSION = 1;
 const STORE_NAME = 'video_blobs';
+const MAX_ACTIVE_OBJECT_URLS = 3;
 
 export interface StoredMediaRecord {
   projectId: string;
@@ -17,8 +18,71 @@ export interface StoredMediaRecord {
   storedAt: string;
 }
 
-// Memory cache of active ObjectURLs to avoid creating duplicates
+// Memory cache of active ObjectURLs (LRU-bounded to prevent iOS Safari WebKit crashes)
 const activeObjectUrls = new Map<string, string>();
+
+function registerObjectUrl(key: string, objectUrl: string): void {
+  if (activeObjectUrls.has(key)) {
+    const existing = activeObjectUrls.get(key)!;
+    if (existing !== objectUrl) {
+      try {
+        URL.revokeObjectURL(existing);
+      } catch {
+        // ignore
+      }
+    }
+    activeObjectUrls.delete(key);
+  }
+
+  // Evict oldest ObjectURL if cache exceeds iOS-safe threshold
+  while (activeObjectUrls.size >= MAX_ACTIVE_OBJECT_URLS) {
+    const oldestKey = activeObjectUrls.keys().next().value;
+    if (!oldestKey) break;
+    const oldestUrl = activeObjectUrls.get(oldestKey);
+    if (oldestUrl) {
+      try {
+        URL.revokeObjectURL(oldestUrl);
+      } catch {
+        // ignore
+      }
+    }
+    activeObjectUrls.delete(oldestKey);
+  }
+
+  activeObjectUrls.set(key, objectUrl);
+}
+
+/**
+ * Explicitly revokes an active ObjectURL for a project or temporary blob URL
+ * to release iOS Safari / Mobile WebKit video buffer memory.
+ */
+export function revokeMediaBlobUrl(projectIdOrUrl: string): void {
+  if (!projectIdOrUrl) return;
+
+  if (activeObjectUrls.has(projectIdOrUrl)) {
+    const url = activeObjectUrls.get(projectIdOrUrl)!;
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // ignore
+    }
+    activeObjectUrls.delete(projectIdOrUrl);
+    return;
+  }
+
+  if (projectIdOrUrl.startsWith('blob:')) {
+    try {
+      URL.revokeObjectURL(projectIdOrUrl);
+    } catch {
+      // ignore
+    }
+    for (const [k, v] of activeObjectUrls.entries()) {
+      if (v === projectIdOrUrl) {
+        activeObjectUrls.delete(k);
+      }
+    }
+  }
+}
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -71,19 +135,14 @@ export async function storeMediaBlob(
       req.onerror = () => reject(req.error);
     });
 
-    // Revoke old URL if any
-    if (activeObjectUrls.has(projectId)) {
-      URL.revokeObjectURL(activeObjectUrls.get(projectId)!);
-    }
-
     const objectUrl = URL.createObjectURL(fileOrBlob);
-    activeObjectUrls.set(projectId, objectUrl);
+    registerObjectUrl(projectId, objectUrl);
 
     return { sizeBytes, objectUrl };
   } catch (err) {
     console.error('Failed to store media in IndexedDB:', err);
-    // Fallback: create temporary in-memory URL
     const fallbackUrl = URL.createObjectURL(fileOrBlob);
+    registerObjectUrl(projectId, fallbackUrl);
     return { sizeBytes: fileOrBlob.size, objectUrl: fallbackUrl };
   }
 }
@@ -92,7 +151,6 @@ export async function storeMediaBlob(
  * Retrieves a persistent Object URL for the stored media blob
  */
 export async function getMediaBlobUrl(projectId: string): Promise<string | null> {
-  // Return cached ObjectURL if still valid in current session
   if (activeObjectUrls.has(projectId)) {
     return activeObjectUrls.get(projectId)!;
   }
@@ -110,7 +168,7 @@ export async function getMediaBlobUrl(projectId: string): Promise<string | null>
 
     if (record && record.blob) {
       const url = URL.createObjectURL(record.blob);
-      activeObjectUrls.set(projectId, url);
+      registerObjectUrl(projectId, url);
       return url;
     }
   } catch (err) {
@@ -125,10 +183,7 @@ export async function getMediaBlobUrl(projectId: string): Promise<string | null>
  */
 export async function deleteMediaBlob(projectId: string): Promise<void> {
   try {
-    if (activeObjectUrls.has(projectId)) {
-      URL.revokeObjectURL(activeObjectUrls.get(projectId)!);
-      activeObjectUrls.delete(projectId);
-    }
+    revokeMediaBlobUrl(projectId);
 
     const db = await openDatabase();
     await new Promise<void>((resolve, reject) => {
@@ -181,7 +236,11 @@ export async function getMediaStorageStats(): Promise<{ totalProjects: number; t
 export async function clearAllMedia(): Promise<void> {
   try {
     for (const url of activeObjectUrls.values()) {
-      URL.revokeObjectURL(url);
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // ignore
+      }
     }
     activeObjectUrls.clear();
 

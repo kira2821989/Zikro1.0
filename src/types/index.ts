@@ -1,9 +1,32 @@
 export type MediaType = 'video' | 'thumbnail';
 export type AspectRatio = '9:16' | '16:9' | '1:1';
-export type ProjectStatus = 'draft' | 'in_review' | 'revision_requested' | 'utr_submitted' | 'paid_unlocked';
+export type ProjectStatus =
+  | 'draft'
+  | 'in_review'
+  | 'revision_requested'
+  | 'utr_submitted'
+  | 'verification_pending'
+  | 'paid_unlocked';
 export type CommentCategory = 'cut' | 'text' | 'audio' | 'color' | 'general';
 export type WatermarkSpeed = 'slow' | 'medium' | 'fast' | 'bouncing';
-export type WatermarkStyle = 'diagonal-floating' | 'bouncing-box' | 'screen-tile' | 'anti-rip-crosshair' | 'ghost-outline' | 'compact-pill';
+export type WatermarkStyle =
+  | 'diagonal-floating'
+  | 'bouncing-box'
+  | 'screen-tile'
+  | 'anti-rip-crosshair'
+  | 'ghost-outline'
+  | 'compact-pill';
+
+export type LinkExpiryDuration = 'never' | '24h' | '48h' | '7d';
+
+export interface ProjectVersion {
+  version: number;
+  label: string; // e.g. "v1", "v2", "v3"
+  previewVideoUrl: string;
+  masterVideoUrl?: string;
+  uploadedAt: string;
+  notes?: string;
+}
 
 export interface CommentReply {
   id: string;
@@ -16,6 +39,7 @@ export interface CommentReply {
 export interface ProjectComment {
   id: string;
   projectId: string;
+  version?: number;
   author: 'client' | 'editor';
   authorName: string;
   timestampSeconds: number; // e.g. 14.2
@@ -48,10 +72,14 @@ export interface SecuritySettings {
   isProtected: boolean;
   passcode?: string; // 4-digit PIN e.g. "4821" (only exposed to creator)
   passcodeHash?: string; // Salted SHA-256 hash of 4-digit PIN for client verification without leaking plaintext PIN
+  expiryDuration?: LinkExpiryDuration;
+  expiresAt?: string; // ISO date string when the client link expires
+  maxViews?: number; // Optional maximum client views before auto-locking
+  viewCount?: number; // Current number of client views recorded
 }
 
 export interface StorageInfo {
-  storageType: 'indexeddb' | 'cloud_url' | 'supabase_storage';
+  storageType: 'indexeddb' | 'cloud_url' | 'supabase_storage' | 'cloudinary';
   fileSizeBytes?: number;
   originalFileName?: string;
   blobKey?: string;
@@ -71,7 +99,14 @@ export interface Project {
   amountINR: number;
   upiId: string;
   upiPayeeName: string;
+  /** Preview media URL shown while locked/in review */
   mediaUrl: string;
+  /** Explicit preview video URL (watermarked/low-res draft stream) */
+  previewVideoUrl?: string;
+  /** Clean high-res master video or download link (NEVER sent to client until status === 'paid_unlocked') */
+  masterVideoUrl?: string;
+  /** Draft Version History (v1, v2, v3) */
+  versions?: ProjectVersion[];
   thumbnailUrl?: string;
   durationSeconds?: number;
   watermarkSettings: WatermarkSettings;
@@ -93,4 +128,3 @@ export interface CreatorSettings {
   defaultWatermarkText: string;
   autoFillUpi: boolean;
 }
-

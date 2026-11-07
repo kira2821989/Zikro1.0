@@ -46,6 +46,8 @@ import { PasscodeLockModal } from './components/PasscodeLockModal';
 import { CreatorAuthScreen } from './components/CreatorAuthScreen';
 import { AccountSettingsModal } from './components/AccountSettingsModal';
 import { 
+  supabase,
+  sanitizeProjectRow,
   fetchProjectById, 
   fetchCreatorProjects, 
   saveProjectToSupabase, 
@@ -55,7 +57,9 @@ import {
   deleteMediaFromSupabase,
   verifyCreatorSession,
   loadCreatorSettings,
-  saveCreatorSettings
+  fetchCreatorSettingsFromSupabase,
+  saveCreatorSettings,
+  incrementProjectViewCountInSupabase
 } from './supabase';
 import { getMediaBlobUrl, deleteMediaBlob } from './utils/mediaDb';
 import { playClickPop, playPaymentSuccessChime, playAlertChime } from './utils/audio';
@@ -141,6 +145,7 @@ export default function App() {
   const [isLoadingCloud, setIsLoadingCloud] = useState<boolean>(() => Boolean(urlProjectId));
   const [isCreatorPreviewingClient, setIsCreatorPreviewingClient] = useState(false);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  const [selectedDraftVersion, setSelectedDraftVersion] = useState<number | undefined>(undefined);
   const [copiedLink, setCopiedLink] = useState(false);
 
   // Actor role: creator retains 'editor' status even when previewing client mode
@@ -172,7 +177,7 @@ export default function App() {
     };
   }, [isProfileMenuOpen]);
 
-  // Creator permanent Account & Payout Settings
+  // Creator permanent Account & Payout Settings (Synced across devices via Supabase Cloud)
   const [creatorSettings, setCreatorSettings] = useState<CreatorSettings>(() =>
     loadCreatorSettings(creatorEmail || '')
   );
@@ -180,6 +185,9 @@ export default function App() {
   useEffect(() => {
     if (creatorEmail) {
       setCreatorSettings(loadCreatorSettings(creatorEmail));
+      fetchCreatorSettingsFromSupabase(creatorEmail).then((cloudSettings) => {
+        setCreatorSettings(cloudSettings);
+      });
     }
   }, [creatorEmail]);
 
@@ -263,58 +271,69 @@ export default function App() {
     }
   }, [creatorEmail, viewMode]);
 
-  // ================= 2. CLIENT AUTO-POLLING (Every 4 seconds for instant unlock) =================
+  // ================= 2. SUPABASE REALTIME LIVE SYNC (0.1s latency, zero polling) =================
   useEffect(() => {
-    // Pause polling while creator is previewing client so simulator toggle isn't overwritten
-    if (viewMode !== 'client' || !activeProjectId || isMutatingRef.current || isCreatorPreviewingClient) return;
+    const channel = supabase
+      .channel('public:projects')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'projects' },
+        async (payload) => {
+          if (isMutatingRef.current || isCreatorPreviewingClient) return;
+          const rawRow = payload.new as any;
+          if (!rawRow || !rawRow.id) return;
 
-    const interval = setInterval(async () => {
-      if (isMutatingRef.current) return;
-      const latest = await fetchProjectById(activeProjectId);
-      if (latest && !isMutatingRef.current) {
-        setProjects(prev => {
-          const idx = prev.findIndex(p => p.id === latest.id);
-          if (idx >= 0) {
-            const oldStatus = prev[idx].status;
-            // Detect if creator approved and unlocked payment
-            if (oldStatus !== 'paid_unlocked' && latest.status === 'paid_unlocked') {
-              playPaymentSuccessChime();
-            }
-            const copy = [...prev];
-            copy[idx] = latest;
-            return copy;
+          const isEditorView = viewMode === 'editor' && Boolean(creatorEmail);
+          const sanitized = await sanitizeProjectRow(rawRow, isEditorView);
+          if (!sanitized) return;
+
+          // In Client View, only process updates for the active project
+          if (viewMode === 'client' && activeProjectId && sanitized.id !== activeProjectId) {
+            return;
           }
-          return [latest, ...prev];
-        });
-      }
-    }, 4000);
 
-    return () => clearInterval(interval);
-  }, [viewMode, activeProjectId, isCreatorPreviewingClient]);
+          // In Editor View, only process updates belonging to the logged-in creator
+          if (
+            viewMode === 'editor' &&
+            creatorEmail &&
+            sanitized.creatorEmail &&
+            sanitized.creatorEmail.toLowerCase().trim() !== creatorEmail.toLowerCase().trim()
+          ) {
+            return;
+          }
 
-  // ================= 2B. CREATOR STUDIO LIVE POLLING (Every 4 seconds for live UTR & comments) =================
-  useEffect(() => {
-    if (viewMode !== 'editor' || !creatorEmail || isMutatingRef.current) return;
-
-    const interval = setInterval(async () => {
-      if (isMutatingRef.current) return;
-      const latestProjects = await fetchCreatorProjects(creatorEmail);
-      if (latestProjects && !isMutatingRef.current) {
-        setProjects(prev => {
-          // Detect if any project transitioned to 'utr_submitted'
-          latestProjects.forEach(latestProj => {
-            const current = prev.find(p => p.id === latestProj.id);
-            if (current && current.status !== 'utr_submitted' && latestProj.status === 'utr_submitted') {
-              playAlertChime();
+          setProjects((prev) => {
+            const idx = prev.findIndex((p) => p.id === sanitized.id);
+            if (idx >= 0) {
+              const oldProj = prev[idx];
+              if (viewMode === 'client' && oldProj.status !== 'paid_unlocked' && sanitized.status === 'paid_unlocked') {
+                playPaymentSuccessChime();
+              }
+              if (
+                viewMode === 'editor' &&
+                oldProj.status !== 'utr_submitted' &&
+                oldProj.status !== 'verification_pending' &&
+                (sanitized.status === 'utr_submitted' || sanitized.status === 'verification_pending')
+              ) {
+                playAlertChime();
+              }
+              const copy = [...prev];
+              copy[idx] = sanitized;
+              return copy;
             }
+            if (viewMode === 'client' && sanitized.id === activeProjectId) {
+              return [sanitized, ...prev];
+            }
+            return prev;
           });
-          return latestProjects;
-        });
-      }
-    }, 4000);
+        }
+      )
+      .subscribe();
 
-    return () => clearInterval(interval);
-  }, [viewMode, creatorEmail]);
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [viewMode, activeProjectId, creatorEmail, isCreatorPreviewingClient]);
 
   // Sync to user-scoped localStorage as backup
   useEffect(() => {
@@ -376,7 +395,11 @@ export default function App() {
   };
 
   const computeStatusFromComments = (currentStatus: ProjectStatus, commentsList: ProjectComment[]): ProjectStatus => {
-    if (currentStatus === 'paid_unlocked' || currentStatus === 'utr_submitted') {
+    if (
+      currentStatus === 'paid_unlocked' ||
+      currentStatus === 'utr_submitted' ||
+      currentStatus === 'verification_pending'
+    ) {
       return currentStatus;
     }
     const hasUnresolved = commentsList.some(c => !c.resolved);
@@ -390,6 +413,7 @@ export default function App() {
     const authorName = commentData.authorName?.trim() || (isEditorActor ? (activeProject.upiPayeeName || 'Editor') : 'Client');
     const newComment: ProjectComment = {
       ...commentData,
+      version: selectedDraftVersion || activeProject.version || 1,
       author: authorRole,
       authorName,
       id: `comm-${Date.now().toString(36)}`,
@@ -500,7 +524,7 @@ export default function App() {
 
   // ================= 3. STRICT ANTI-FRAUD UPI HANDLING =================
   
-  // Client submits UTR: Updates project to 'utr_submitted'
+  // Client submits UTR: Updates project to 'verification_pending' (NO instant auto-unlock!)
   const handleSubmitUtr = async (utrNumber: string, method: string) => {
     if (!activeProject) return;
     isMutatingRef.current = true;
@@ -512,12 +536,12 @@ export default function App() {
     };
 
     handleUpdateActiveProject({
-      status: 'utr_submitted',
+      status: 'verification_pending',
       paymentDetails
     });
 
     try {
-      await updateProjectStatusInSupabase(activeProject.id, 'utr_submitted', paymentDetails);
+      await updateProjectStatusInSupabase(activeProject.id, 'verification_pending', paymentDetails);
     } finally {
       setTimeout(() => { isMutatingRef.current = false; }, 1000);
     }
@@ -678,8 +702,66 @@ export default function App() {
 
   const isUnlocked = activeProject?.status === 'paid_unlocked';
   const isPaidUnlocked = isUnlocked;
-  const isUtrSubmitted = activeProject?.status === 'utr_submitted';
-  const isPinLocked = (isClientModeOnly || isCreatorPreviewingClient) && Boolean(activeProject?.securitySettings?.isProtected && !unlockedPinProjects.has(activeProject.id));
+  const isUtrSubmitted =
+    activeProject?.status === 'utr_submitted' || activeProject?.status === 'verification_pending';
+  const isPinLocked =
+    (isClientModeOnly || isCreatorPreviewingClient) &&
+    Boolean(activeProject?.securitySettings?.isProtected && !unlockedPinProjects.has(activeProject.id));
+
+  // Check Link Expiry & Maximum Views Limits (Enforced for unauthenticated client views when unpaid)
+  const isLinkExpired = Boolean(
+    !isUnlocked &&
+      isClientModeOnly &&
+      activeProject?.securitySettings?.expiresAt &&
+      Date.now() > new Date(activeProject.securitySettings.expiresAt).getTime()
+  );
+  const isMaxViewsExceeded = Boolean(
+    !isUnlocked &&
+      isClientModeOnly &&
+      activeProject?.securitySettings?.maxViews &&
+      activeProject.securitySettings.maxViews > 0 &&
+      (activeProject.securitySettings.viewCount ?? 0) >= activeProject.securitySettings.maxViews
+  );
+  const isLinkAccessExpiredOrExhausted = isLinkExpired || isMaxViewsExceeded;
+
+  // Reset selectedDraftVersion when switching projects
+  useEffect(() => {
+    setSelectedDraftVersion(activeProject?.version || undefined);
+  }, [activeProject?.id, activeProject?.version]);
+
+  // Increment client view count once per browser session when client accesses an unlocked/active review link
+  useEffect(() => {
+    if (
+      !activeProject ||
+      !isClientModeOnly ||
+      isPinLocked ||
+      isLinkAccessExpiredOrExhausted ||
+      typeof window === 'undefined'
+    ) {
+      return;
+    }
+    try {
+      const raw = sessionStorage.getItem('zikro_counted_views');
+      const countedIds: string[] = raw ? JSON.parse(raw) : [];
+      if (!countedIds.includes(activeProject.id)) {
+        countedIds.push(activeProject.id);
+        sessionStorage.setItem('zikro_counted_views', JSON.stringify(countedIds));
+        incrementProjectViewCountInSupabase(activeProject.id).then((newCount) => {
+          if (typeof newCount === 'number' && activeProject.securitySettings) {
+            handleUpdateActiveProject({
+              securitySettings: {
+                ...activeProject.securitySettings,
+                viewCount: newCount
+              }
+            });
+          }
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeProject?.id, isClientModeOnly, isPinLocked, isLinkAccessExpiredOrExhausted]);
+
   const clientReviewUrl = typeof window !== 'undefined' && activeProject
     ? `${window.location.origin}${window.location.pathname}?project=${activeProject.id}&mode=client` 
     : '';
@@ -1098,19 +1180,81 @@ export default function App() {
             </p>
           </div>
         ) : isPinLocked ? (
-          /* Strictly isolated PIN lock screen: NO video/audio/invoice/metadata nodes rendered in DOM until correct PIN entered! */
+          /* Strictly isolated PIN lock screen: NO video/audio/invoice/comments/metadata nodes rendered in DOM until correct PIN entered! */
           <PasscodeLockModal
             project={{
               ...activeProject,
               creatorEmail: undefined,
-              mediaUrl: ''
+              mediaUrl: '',
+              previewVideoUrl: '',
+              masterVideoUrl: undefined,
+              comments: [],
+              versions: []
             }}
             onUnlockSuccess={() => handleUnlockPasscode(activeProject.id)}
             isEditorViewing={isCreatorPreviewingClient}
           />
+        ) : isLinkAccessExpiredOrExhausted ? (
+          /* Review Link Expired or Maximum Views Reached Lock Screen */
+          <div className="text-center py-20 p-6 sm:p-8 bg-neutral-900/80 rounded-3xl border border-amber-500/40 max-w-md mx-auto my-8 space-y-4 shadow-2xl">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-400 flex items-center justify-center mx-auto">
+              <Clock className="w-8 h-8" />
+            </div>
+            <div className="space-y-1.5">
+              <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400 font-semibold">
+                {isLinkExpired ? 'Review Link Expired' : 'Maximum Views Reached'}
+              </div>
+              <h2 className="text-xl font-bold text-white">
+                {isLinkExpired
+                  ? 'This Draft Review Link Has Expired'
+                  : `View Limit Reached (${activeProject.securitySettings?.maxViews} Views)`}
+              </h2>
+              <p className="text-xs text-neutral-400 max-w-xs mx-auto leading-relaxed">
+                For security and anti-piracy protection, this preview link for{' '}
+                <strong className="text-neutral-200">{activeProject.title}</strong> is now locked. Ask your editor to extend access or approve & pay via UPI to unlock the permanent 4K master.
+              </p>
+            </div>
+            <div className="pt-2 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => setIsPaymentOpen(true)}
+                className="w-full inline-flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black py-3 px-4 rounded-xl text-xs shadow-lg shadow-amber-500/20 transition"
+              >
+                <Lock className="w-4 h-4" />
+                <span>Approve & Pay ₹{activeProject.amountINR.toLocaleString('en-IN')} to Unlock Forever</span>
+              </button>
+              <a
+                href={`https://api.whatsapp.com/send?${
+                  activeProject.editorPhone
+                    ? `phone=${activeProject.editorPhone.replace(/[^0-9]/g, '').length === 10 ? '91' + activeProject.editorPhone.replace(/[^0-9]/g, '') : activeProject.editorPhone.replace(/[^0-9]/g, '')}&`
+                    : ''
+                }text=${encodeURIComponent(
+                  `Hey ${activeProject.upiPayeeName || 'Editor'}! The Zikro review link for "${activeProject.title}" has expired / reached its view limit. Could you extend it?`
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full inline-flex items-center justify-center gap-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-semibold py-2.5 px-4 rounded-xl text-xs transition"
+              >
+                <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Request Link Extension on WhatsApp</span>
+              </a>
+            </div>
+          </div>
         ) : (
           /* ================= CLIENT REVIEW VIEW ================= */
           <div className="space-y-6">
+            {/* Cross-Device Local IndexedDB Warning Banner if local-only storage */}
+            {(activeProject.storageInfo?.storageType === 'indexeddb' ||
+              !activeProject.mediaUrl ||
+              activeProject.mediaUrl.startsWith('blob:')) && (
+              <div className="p-3 rounded-2xl bg-amber-950/60 border border-amber-500/50 text-xs text-amber-200 flex items-center gap-2.5">
+                <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>
+                  <strong>Local Device Preview Only — Upload to Cloud R2/Supabase to share across devices.</strong>
+                </span>
+              </div>
+            )}
+
             {/* Project Header Info */}
             <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-neutral-800">
               <div>
@@ -1125,7 +1269,7 @@ export default function App() {
                 <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
                   <span>{activeProject.title}</span>
                   <span className="text-xs font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-md">
-                    v{activeProject.version || 1}
+                    v{selectedDraftVersion || activeProject.version || 1}
                   </span>
                 </h1>
               </div>
@@ -1150,7 +1294,7 @@ export default function App() {
                     className="inline-flex items-center gap-2 bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold px-4 py-3 rounded-2xl text-xs sm:text-sm animate-pulse"
                   >
                     <Clock className="w-4 h-4 text-amber-400" />
-                    <span>UTR Pending Editor Check</span>
+                    <span>Payment Verification Pending with Editor</span>
                   </button>
                 ) : (
                   <button
@@ -1184,6 +1328,8 @@ export default function App() {
                     }}
                     onOpenPaymentModal={() => setIsPaymentOpen(true)}
                     isEditorView={isEditorActor}
+                    selectedVersion={selectedDraftVersion}
+                    onSelectVersion={(verNum) => setSelectedDraftVersion(verNum)}
                   />
                 ) : (
                   <ThumbnailReviewer

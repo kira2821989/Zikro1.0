@@ -412,6 +412,12 @@ export const TimestampComments: React.FC<TimestampCommentsProps> = ({
                           <span>{cat.label}</span>
                         </span>
 
+                        {comment.version && (
+                          <span className="text-[10px] font-mono bg-neutral-900 border border-neutral-800 text-amber-300/90 px-1.5 py-0.5 rounded">
+                            v{comment.version}
+                          </span>
+                        )}
+
                         <span className="text-[11px] text-neutral-400 font-medium">
                           {comment.authorName}
                         </span>

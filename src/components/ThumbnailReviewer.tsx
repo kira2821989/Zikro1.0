@@ -1,7 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Lock, Download, ShieldCheck, ZoomIn, ZoomOut, RotateCcw, ShieldAlert, RefreshCw } from 'lucide-react';
+import {
+  Lock,
+  Download,
+  ShieldCheck,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  ShieldAlert,
+  RefreshCw,
+  Clock
+} from 'lucide-react';
 import { Project, ProjectComment } from '../types';
 import { getDirectDownloadUrl } from '../supabase';
+import { WatermarkOverlay } from './WatermarkOverlay';
 
 interface ThumbnailReviewerProps {
   project: Project;
@@ -12,7 +23,6 @@ interface ThumbnailReviewerProps {
 
 export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
   project,
-  comments,
   onOpenPaymentModal,
   onRequestCommentAtVisual
 }) => {
@@ -20,14 +30,20 @@ export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
   const [isTampered, setIsTampered] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const isUnlocked = project.status === 'paid_unlocked';
+  const isVerificationPending =
+    project.status === 'utr_submitted' || project.status === 'verification_pending';
 
-  // Reset tamper state when switching projects
+  const previewSrc = project.previewVideoUrl || project.mediaUrl;
+  const masterDownloadSrc = isUnlocked
+    ? project.masterVideoUrl || previewSrc
+    : '';
+
   useEffect(() => {
     setIsTampered(false);
     setZoom(1);
-  }, [project.id, project.mediaUrl]);
+  }, [project.id, previewSrc]);
 
-  // ANTI-INSPECT-ELEMENT WATERMARK TAMPER SHIELD FOR THUMBNAIL
+  // ANTI-INSPECT-ELEMENT CANVAS WATERMARK TAMPER SHIELD FOR THUMBNAIL
   useEffect(() => {
     if (isUnlocked || !containerRef.current) return;
 
@@ -38,47 +54,25 @@ export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
 
     const checkTamper = () => {
       if (isUnlocked) return;
-      const watermarkEl = containerRef.current?.querySelector('#zikro-thumbnail-watermark') as HTMLElement | null;
-      if (!watermarkEl) {
+      const watermarkCanvas = containerRef.current?.querySelector(
+        '#zikro-anti-theft-watermark'
+      ) as HTMLCanvasElement | null;
+      if (!watermarkCanvas) {
         triggerTamperLockdown();
         return;
       }
 
-      const style = window.getComputedStyle(watermarkEl);
+      const style = window.getComputedStyle(watermarkCanvas);
       const opacity = parseFloat(style.opacity || '1');
+      const rect = watermarkCanvas.getBoundingClientRect();
       if (
         style.display === 'none' ||
         style.visibility === 'hidden' ||
-        opacity < 0.10
+        opacity < 0.15 ||
+        rect.width < 40 ||
+        rect.height < 40
       ) {
         triggerTamperLockdown();
-        return;
-      }
-
-      const text = (watermarkEl.innerText || watermarkEl.textContent || '').trim();
-      if (text.length <= 3) {
-        triggerTamperLockdown();
-        return;
-      }
-
-      const protectedElements = watermarkEl.querySelectorAll('[data-watermark-protected="true"]');
-      if (protectedElements.length === 0) {
-        triggerTamperLockdown();
-        return;
-      }
-
-      for (let i = 0; i < protectedElements.length; i++) {
-        const el = protectedElements[i] as HTMLElement;
-        const elStyle = window.getComputedStyle(el);
-        const elOpacity = parseFloat(elStyle.opacity || '1');
-        if (
-          elStyle.display === 'none' ||
-          elStyle.visibility === 'hidden' ||
-          elOpacity < 0.10
-        ) {
-          triggerTamperLockdown();
-          return;
-        }
       }
     };
 
@@ -90,8 +84,7 @@ export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
       childList: true,
       subtree: true,
       attributes: true,
-      characterData: true,
-      attributeFilter: ['style', 'class', 'hidden']
+      attributeFilter: ['style', 'class', 'hidden', 'width', 'height']
     });
 
     const interval = setInterval(checkTamper, 1500);
@@ -100,7 +93,7 @@ export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
       observer.disconnect();
       clearInterval(interval);
     };
-  }, [isUnlocked, project.mediaUrl]);
+  }, [isUnlocked, previewSrc]);
 
   const handleContextMenu = (e: React.MouseEvent) => {
     if (!isUnlocked) {
@@ -110,19 +103,19 @@ export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
 
   return (
     <div className="flex flex-col items-center w-full max-w-3xl">
-      <div 
+      <div
         ref={containerRef}
         onContextMenu={handleContextMenu}
         className="relative w-full aspect-video rounded-2xl overflow-hidden bg-neutral-900 border border-neutral-800 shadow-2xl flex items-center justify-center select-none"
       >
         {/* The Graphic Image (Hidden if tampered) */}
         {!isTampered && (
-          <div 
+          <div
             className="w-full h-full transition-transform duration-200 flex items-center justify-center"
             style={{ transform: `scale(${zoom})` }}
           >
             <img
-              src={project.mediaUrl}
+              src={previewSrc}
               alt={project.title}
               draggable={false}
               onDragStart={(e) => e.preventDefault()}
@@ -135,7 +128,9 @@ export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
         {isTampered && (
           <div className="absolute inset-0 bg-neutral-950/98 flex flex-col items-center justify-center p-6 text-center z-40 select-none">
             <ShieldAlert className="w-12 h-12 text-red-500 mb-2 animate-bounce" />
-            <div className="font-bold text-white text-sm">Security Lockdown: Watermark Tampering Detected</div>
+            <div className="font-bold text-white text-sm">
+              Security Lockdown: Watermark Tampering Detected
+            </div>
             <p className="text-xs text-red-300 mt-1 max-w-xs leading-relaxed font-mono">
               The confidential preview watermark was removed or modified via DevTools. Graphic preview has been locked.
             </p>
@@ -149,59 +144,14 @@ export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
           </div>
         )}
 
-        {/* Watermark Overlay for Thumbnail */}
+        {/* Canvas Anti-Screen-Recording Watermark Overlay for Thumbnail */}
         {!isUnlocked && (
-          <div 
-            id="zikro-thumbnail-watermark"
-            className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-between"
-          >
-            {/* Top Bar */}
-            <div 
-              data-watermark-protected="true"
-              className="p-3 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between text-xs font-mono text-amber-300"
-            >
-              <span className="bg-red-950/80 border border-red-500/50 text-red-200 px-2 py-0.5 rounded font-semibold text-[10px]">
-                THUMBNAIL DRAFT PREVIEW
-              </span>
-              <span>FOR: {project.clientName}</span>
-            </div>
-
-            {/* Delicate Stencil Watermark Grid without heavy dark boxes */}
-            <div 
-              data-watermark-protected="true"
-              className="grid grid-cols-2 sm:grid-cols-3 gap-6 p-6 place-items-center select-none"
-              style={{ opacity: project.watermarkSettings?.opacity || 0.30 }}
-            >
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div 
-                  key={i} 
-                  data-watermark-protected="true"
-                  className="transform -rotate-20 text-center select-none"
-                >
-                  <div 
-                    className="text-white font-extrabold text-xs sm:text-sm uppercase tracking-widest"
-                    style={{
-                      textShadow: '0 2px 4px rgba(0,0,0,0.9)',
-                      WebkitTextStroke: '0.5px rgba(255,255,255,0.8)'
-                    }}
-                  >
-                    {project.watermarkSettings.text || 'ZIKRO PREVIEW'}
-                  </div>
-                  <div className="text-[9px] text-amber-300 font-mono tracking-wider drop-shadow">
-                    UNPAID • DO NOT PUBLISH
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Bottom Bar */}
-            <div 
-              data-watermark-protected="true"
-              className="p-2 bg-gradient-to-t from-black/60 to-transparent text-center text-[9px] font-mono text-neutral-400"
-            >
-              PROTECTED BY ZIKRO • UNLOCK CLEAN HD IMAGE VIA UPI
-            </div>
-          </div>
+          <WatermarkOverlay
+            settings={project.watermarkSettings}
+            clientName={project.clientName}
+            isUnlocked={isUnlocked}
+            currentTime={0}
+          />
         )}
 
         {/* Unlocked banner */}
@@ -214,23 +164,23 @@ export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
 
         {/* Zoom Controls */}
         <div className="absolute bottom-3 right-3 z-30 flex items-center gap-1 bg-black/70 backdrop-blur-md p-1 rounded-lg border border-neutral-700/80 text-white">
-          <button 
-            onClick={() => setZoom(z => Math.max(0.8, z - 0.2))} 
+          <button
+            onClick={() => setZoom((z) => Math.max(0.8, z - 0.2))}
             title="Zoom out"
             className="p-1.5 hover:text-amber-400 rounded transition"
           >
             <ZoomOut className="w-3.5 h-3.5" />
           </button>
           <span className="text-[10px] font-mono px-1">{Math.round(zoom * 100)}%</span>
-          <button 
-            onClick={() => setZoom(z => Math.min(2, z + 0.2))} 
+          <button
+            onClick={() => setZoom((z) => Math.min(2, z + 0.2))}
             title="Zoom in"
             className="p-1.5 hover:text-amber-400 rounded transition"
           >
             <ZoomIn className="w-3.5 h-3.5" />
           </button>
-          <button 
-            onClick={() => setZoom(1)} 
+          <button
+            onClick={() => setZoom(1)}
             title="Reset Zoom"
             className="p-1.5 hover:text-amber-400 rounded transition"
           >
@@ -250,15 +200,23 @@ export const ThumbnailReviewer: React.FC<ThumbnailReviewerProps> = ({
 
         {isUnlocked ? (
           <a
-            href={getDirectDownloadUrl(project.mediaUrl, `${project.title}_HD`, 'thumbnail')}
+            href={getDirectDownloadUrl(masterDownloadSrc, `${project.title}_HD`, 'thumbnail')}
             download={`${project.title.replace(/\s+/g, '_')}_HD.png`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex-1 inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl font-semibold text-xs transition shadow-lg shadow-emerald-600/30"
           >
             <Download className="w-4 h-4" />
-            <span>Download Ultra HD Thumbnail</span>
+            <span>Download Clean Master Graphic</span>
           </a>
+        ) : isVerificationPending ? (
+          <button
+            onClick={onOpenPaymentModal}
+            className="flex-1 inline-flex items-center justify-center gap-2 bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold px-4 py-2.5 rounded-xl text-xs transition animate-pulse"
+          >
+            <Clock className="w-4 h-4 text-amber-400" />
+            <span>Payment Verification Pending with Editor</span>
+          </button>
         ) : (
           <button
             onClick={onOpenPaymentModal}
